@@ -1,7 +1,9 @@
 #include <stdio.h>
 #include <stdlib.h>
+#include <stdint.h>
 
-unsigned char ram[65536 + 2] = {0}; // 2 for printing opcode bytes easily
+
+unsigned char ram[65536 + 3] = {0}; // 3 for printing opcode bytes easily
 
 struct cpu{
     unsigned short pc; // Instruction Pointer  /  Program Counter
@@ -20,14 +22,14 @@ struct cpu{
         };
         //flags
         struct{
-            unsigned short f_c : 1;
-            unsigned short f_n : 1;
-            unsigned short f_pv : 1;
+            unsigned short f_c : 1; // carry flag
+            unsigned short f_n : 1; // 1 for addition, 0 for subtraction
+            unsigned short f_pv : 1; // parity / overflow
             unsigned short f_bit3 : 1;
-            unsigned short f_h : 1;
+            unsigned short f_h : 1; // half carry
             unsigned short f_bit5 : 1;
-            unsigned short f_z : 1;
-            unsigned short f_s : 1;
+            unsigned short f_z : 1; // zero flag
+            unsigned short f_s : 1; // negative flag
             unsigned short f_ : 8;
         };
     };
@@ -57,6 +59,34 @@ struct cpu{
 
 };
 
+static unsigned add8(struct cpu *cpu, unsigned x, unsigned y, unsigned carry_in){
+
+    uint64_t hsum = (x & 0xf) + (y & 0xf) + carry_in;
+    int hcarry = hsum >> 4;
+    uint64_t usum = x + y + carry_in;
+    int64_t ssum = (int64_t)(signed char)x + (int64_t)(signed char)y + (int64_t)(signed char)carry_in;
+    int carry_out = usum != (uint8_t)usum;
+    int overflow = ssum != (int8_t)ssum;
+    
+    uint8_t result = usum;
+    int zero = !result;
+    int neg = result >> 7;
+
+    cpu->f_z = zero;
+    cpu->f_pv = overflow;  //might need to be !overflow
+    cpu->f_c = carry_out;
+    cpu->f_s = neg;
+    cpu->f_h = hcarry;
+    // cpu->f_n   set by caller
+
+    return result;
+}
+
+/*
+static unsigned add16(struct cpu *cpu, unsigned x, unsigned y, unsigned carry_in){
+    
+}
+*/
 
 int main(int argc, char const *argv[]) {
     (void)argc;
@@ -162,8 +192,44 @@ int main(int argc, char const *argv[]) {
         case 0x13: // inc de
             cpu->de++;
             break;
-        //case 0xfe: // cp *     probably should be something like `cp a,*` or `cp *,a`
-            
+        case 0xfe: // cp *     probably should be something like `cp a,*` or `cp *,a`
+            // page 164 in z80 cpu manual
+            byte1 = ram[cpu->pc++];
+            add8(cpu, cpu->a, ~byte1, 1);
+            cpu->f_n = 1;
+            break;
+        case 0xca: // jp z,**
+            byte1 = ram[cpu->pc++];
+            byte2 = ram[cpu->pc++];
+            if (cpu->f_z)
+                cpu->pc = byte1 | (byte2 << 8);
+            break;
+        case 0xdd: // IX Instructions
+            switch(ram[cpu->pc++]){
+            case 0xe5: // push ix
+            // page 117 om z80 cpu manual
+                cpu->sp--;
+                ram[cpu->sp] = cpu->ix>>8; // push high bits
+                cpu->sp--;
+                ram[cpu->sp] = cpu->ix; // push low bits
+                break;
+            case 0x21: // ld ix,**
+                byte1 = ram[cpu->pc++];
+                byte2 = ram[cpu->pc++];
+                cpu->ix = byte1 | (byte2 << 8);
+                break;
+            // case 0x39: // add ix,sp
+
+            //     break;
+            default:
+                goto fail;
+            }
+            break;
+        case 0xc5: // push bc
+            cpu->sp--;
+            ram[cpu->sp] = cpu->b;
+            cpu->sp--;
+            ram[cpu->sp] = cpu->c;
             break;
         default:
 fail:
