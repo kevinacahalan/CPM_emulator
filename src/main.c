@@ -56,7 +56,9 @@ struct cpu{
     };
 
     // Alternate registers
-
+    unsigned short bc_prime;
+    unsigned short de_prime;
+    unsigned short hl_prime;
 };
 
 static unsigned add8(struct cpu *cpu, unsigned x, unsigned y, unsigned carry_in){
@@ -82,11 +84,29 @@ static unsigned add8(struct cpu *cpu, unsigned x, unsigned y, unsigned carry_in)
     return result;
 }
 
-/*
+
 static unsigned add16(struct cpu *cpu, unsigned x, unsigned y, unsigned carry_in){
+    uint64_t hsum = (x & 0xfff) + (y & 0xfff) + carry_in;
+    int hcarry = hsum >> 12;
+    uint64_t usum = x + y + carry_in;
+    // int64_t ssum = (int64_t)(signed short)x + (int64_t)(signed short)y + (int64_t)(signed short)carry_in;
+    int carry_out = usum != (uint8_t)usum;
+    // int overflow = ssum != (int8_t)ssum;
     
+    uint8_t result = usum;
+    // int zero = !result;
+    // int neg = result >> 15;
+
+    // cpu->f_z = zero;
+    // cpu->f_pv = overflow;  //might need to be !overflow
+    cpu->f_c = carry_out;
+    // cpu->f_s = neg;
+    cpu->f_h = hcarry;
+    // cpu->f_n   set by caller
+
+    return result;
 }
-*/
+
 
 int main(int argc, char const *argv[]) {
     (void)argc;
@@ -106,7 +126,7 @@ int main(int argc, char const *argv[]) {
     for(;;){
         printf("Bytes %02hhx %02hhx %02hhx %02hhx at 0x%04hx after %llu run\n",ram[cpu->pc],ram[cpu->pc+1],ram[cpu->pc+2],ram[cpu->pc+3],cpu->pc,ran++);
         unsigned char opcode = ram[cpu->pc];
-        unsigned short oldpc = cpu->pc++; // oldpc gets cpu->pc before it is instrumented
+        unsigned short oldpc = cpu->pc++; // increment instruction pointer
         unsigned char byte1;
         unsigned char byte2;
         unsigned short tmp_short;
@@ -138,6 +158,7 @@ int main(int argc, char const *argv[]) {
                 byte1 = ram[cpu->pc++];
                 byte2 = ram[cpu->pc++];
                 cpu->sp = ram[byte1 | (byte2 << 8)];
+                cpu->sp |= ram[(byte1 | (byte2 << 8)) + 1] << 8;
                 break;
             default:
                 goto fail;
@@ -182,6 +203,9 @@ int main(int argc, char const *argv[]) {
                 byte2 = ram[cpu->pc++];
                 cpu->iy = byte1 | (byte2 << 8);
                 break;
+            case 0xe9: // jp (iy) ...the syntex of this instruction is off
+                cpu->pc = cpu->iy;
+                break;
             default:
                 goto fail;
             }
@@ -218,9 +242,10 @@ int main(int argc, char const *argv[]) {
                 byte2 = ram[cpu->pc++];
                 cpu->ix = byte1 | (byte2 << 8);
                 break;
-            // case 0x39: // add ix,sp
-
-            //     break;
+            case 0x39: // add ix,sp
+                cpu->ix = add16(cpu, cpu->ix, cpu->sp, 0);
+                cpu->f_n = 1;
+                break;
             default:
                 goto fail;
             }
@@ -230,6 +255,60 @@ int main(int argc, char const *argv[]) {
             ram[cpu->sp] = cpu->b;
             cpu->sp--;
             ram[cpu->sp] = cpu->c;
+            break;
+        case 0x6f: // ld l,a
+            cpu->l = cpu->a;
+            break;
+        case 0x26: // ld h,*
+            byte1 = ram[cpu->pc++];
+            cpu->h = byte1;
+            break;
+        case 0x39: // add hl,sp
+            cpu->hl = add16(cpu, cpu->hl, cpu->sp, 0);
+            cpu->f_n = 1;
+            break;
+        case 0x3a: // ld a,(**)
+            byte1 = ram[cpu->pc++];
+            byte2 = ram[cpu->pc++];
+            cpu->a = ram[byte1 | (byte2 << 8)];
+            break;
+        case 0xbc: // cp h
+            add8(cpu, cpu->a, ~cpu->h, 1);
+            cpu->f_n = 1;
+            break;
+        case 0x30: // jr nc,*
+            byte1 = ram[cpu->pc++];
+            if(!cpu->f_c)
+                cpu->pc = (short)(signed char)byte1 + oldpc;
+            break;
+        case 0x46: // ld b,(hl)
+            cpu->b = ram[cpu->hl];
+            break;
+        case 0x24: // inc h
+            cpu->h++;
+            break;
+        case 0x66: // ld h,(hl)
+            cpu->h = ram[cpu->hl];
+            break;
+        case 0x68: // ld l, b
+            cpu->l = cpu->b;
+            break;
+        case 0xe9: // jp (hl)
+            cpu->pc = cpu->hl;
+            break;
+        case 0xd9: // exx
+            tmp_short = cpu->bc;
+            cpu->bc = cpu->bc_prime;
+            cpu->bc_prime = tmp_short;
+
+            tmp_short = cpu->de;
+            cpu->de = cpu->de_prime;
+            cpu->de_prime = tmp_short;
+
+            tmp_short = cpu->hl;
+            cpu->hl = cpu->hl_prime;
+            cpu->hl_prime = tmp_short;
+
             break;
         default:
 fail:
