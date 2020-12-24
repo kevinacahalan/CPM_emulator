@@ -56,10 +56,20 @@ struct cpu{
     };
 
     // Alternate registers
+    unsigned short af_prime;
     unsigned short bc_prime;
     unsigned short de_prime;
     unsigned short hl_prime;
 };
+
+static unsigned char parity(unsigned char p){
+    p = ((p >> 1) & 0x55)+(p & 0x55);
+    p = ((p >> 2) & 0x33)+(p & 0x33);
+    p = ((p >> 4) & 0x0f)+(p & 0x0f);
+    p = !(p & 1);
+
+    return p;
+}
 
 static unsigned add8(struct cpu *cpu, unsigned x, unsigned y, unsigned carry_in){
 
@@ -119,7 +129,8 @@ int main(int argc, char const *argv[]) {
     printf("got %zd bytes\n", fread(ram + 256, 1, 65536 - 256, fp));
     fclose(fp);
     
-    struct cpu *cpu = calloc(sizeof *cpu, 1);
+    struct cpu _cpu;
+    struct cpu *cpu = &_cpu;
     cpu->pc = 256; //where CPM starts program
 
     unsigned long long ran = 0;
@@ -129,7 +140,7 @@ int main(int argc, char const *argv[]) {
         unsigned short oldpc = cpu->pc++; // increment instruction pointer
         unsigned char byte1;
         unsigned char byte2;
-        unsigned short tmp_short;
+        unsigned short tmp_ushort;
 
 
         switch (opcode){
@@ -160,6 +171,12 @@ int main(int argc, char const *argv[]) {
                 cpu->sp = ram[byte1 | (byte2 << 8)];
                 cpu->sp |= ram[(byte1 | (byte2 << 8)) + 1] << 8;
                 break;
+            case 0xb0: // ldir
+                //basically a memcpy
+                do ram[cpu->de++] = ram[cpu->hl++];
+                while ((unsigned short)--cpu->bc);
+                
+                break;
             default:
                 goto fail;
             }
@@ -174,9 +191,9 @@ int main(int argc, char const *argv[]) {
             cpu->e = ram[cpu->hl];
             break;
         case 0xeb: // ex de, hl
-            tmp_short = cpu->de;
+            tmp_ushort = cpu->de;
             cpu->de = cpu->hl;
-            cpu->hl = tmp_short;
+            cpu->hl = tmp_ushort;
             break;
         case 0x23: // inc hl
             cpu->hl++;
@@ -205,6 +222,12 @@ int main(int argc, char const *argv[]) {
                 break;
             case 0xe9: // jp (iy) ...the syntex of this instruction is off
                 cpu->pc = cpu->iy;
+                break;
+            case 0xe5: // push iy
+                cpu->sp--;
+                ram[cpu->sp] = cpu->iy >> 8;
+                cpu->sp--;
+                ram[cpu->sp] = cpu->iy;
                 break;
             default:
                 goto fail;
@@ -297,18 +320,127 @@ int main(int argc, char const *argv[]) {
             cpu->pc = cpu->hl;
             break;
         case 0xd9: // exx
-            tmp_short = cpu->bc;
+            tmp_ushort = cpu->bc;
             cpu->bc = cpu->bc_prime;
-            cpu->bc_prime = tmp_short;
+            cpu->bc_prime = tmp_ushort;
 
-            tmp_short = cpu->de;
+            tmp_ushort = cpu->de;
             cpu->de = cpu->de_prime;
-            cpu->de_prime = tmp_short;
+            cpu->de_prime = tmp_ushort;
 
-            tmp_short = cpu->hl;
+            tmp_ushort = cpu->hl;
             cpu->hl = cpu->hl_prime;
-            cpu->hl_prime = tmp_short;
+            cpu->hl_prime = tmp_ushort;
 
+            break;
+        case 0xaf: // xor a
+            cpu->a ^= cpu->a;
+            cpu->f_c = 0;
+            cpu->f_n = 0;
+            cpu->f_pv = parity(cpu->a);
+            cpu->f_h = 0;
+            cpu->f_z = !cpu->a;
+            cpu->f_s = cpu->a >> 7; // take sign bit and put it in f_s
+
+            break;
+        case 0x67: // ld h,a
+            cpu->h = cpu->a;
+            break;
+        case 0xe5: //push hl
+            cpu->sp--;
+            ram[cpu->sp] = cpu->h;
+            cpu->sp--;
+            ram[cpu->sp] = cpu->l;
+            break;
+        case 0x21: // ld hl,**
+            byte1 = ram[cpu->pc++];
+            byte2 = ram[cpu->pc++];
+            cpu->hl = byte1 | (byte2 << 8);
+            break;
+        case 0xcd: // call **
+            byte1 = ram[cpu->pc++];
+            byte2 = ram[cpu->pc++];
+
+            // push pc
+            cpu->sp--;
+            ram[cpu->sp] = cpu->pc >> 8;
+            cpu->sp--;
+            ram[cpu->sp] = cpu->pc;
+
+            cpu->pc = byte1 | (byte2 << 8);
+
+            if(cpu->pc == 5){
+                printf("CP/M was called at 0x%04hhx\n", oldpc);
+            }
+
+            break;
+        case 0xf3: // di
+            printf("Interrupts off, di instruction not written\n");
+            break;
+        case 0x22: // ld (**), hl
+            byte1 = ram[cpu->pc++];
+            byte2 = ram[cpu->pc++];
+            ram[byte1 | (byte2 << 8)] = cpu->hl;
+            ram[(unsigned short)((byte1 | (byte2 << 8)) + 1)] = cpu->hl >> 8;
+            break;
+        case 0xe1: // pop hl
+            cpu->l = ram[cpu->sp++];
+            cpu->h = ram[cpu->sp++];
+            break;
+        case 0xe3: // ex (sp),hl
+            tmp_ushort = cpu->hl;
+            cpu->l = ram[cpu->sp]; 
+            cpu->h = ram[cpu->sp + 1];
+            ram[cpu->sp] = tmp_ushort;
+            ram[cpu->sp + 1] = tmp_ushort >> 8;
+            break;
+        case 0xf5: // push af
+            cpu->sp--;
+            ram[cpu->sp] = cpu->a;
+            cpu->sp--;
+            ram[cpu->sp] = cpu->f;
+            break;
+        case 0x08: // ex af,af'
+            tmp_ushort = cpu->af;
+            cpu->af = cpu->af_prime;
+            cpu->af_prime = tmp_ushort;
+            break;
+        case 0x4d: // ld c,l
+            cpu->c = cpu->l;
+            break;
+        case 0x44: // ld b,h
+            cpu->b = cpu->h;
+            break;
+        case 0xf9: // ld sp,hl
+            cpu->sp = cpu->hl;
+            break;
+        case 0x7d: // ld a,l
+            cpu->a = cpu->l;
+            break;
+        case 0x02: // ld (bc),a
+            ram[cpu->bc] = cpu->a;
+            break;
+        case 0x03: // inc bc
+            cpu->bc++;
+            break;
+        case 0x7c: // ld a,h
+            cpu->a = cpu->h;
+            break;
+        case 0xd1: // pop de
+            cpu->e = ram[cpu->sp++];
+            cpu->d = ram[cpu->sp++];
+            break;
+        case 0x7e: // ld a,(hl)
+            cpu->a = ram[cpu->hl];
+            break;
+        case 0xb4: // or h
+            cpu->a |= cpu->h;
+            cpu->f_c = 0;
+            cpu->f_n = 0;
+            cpu->f_pv = parity(cpu->a);
+            cpu->f_h = 0;
+            cpu->f_z = !cpu->a;
+            cpu->f_s = cpu->a >> 7; // take sign bit and put it in f_s
             break;
         default:
 fail:
