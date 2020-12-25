@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdint.h>
+#include <string.h>
 
 
 unsigned char ram[65536 + 3] = {0}; // 3 for printing opcode bytes easily
@@ -100,10 +101,10 @@ static unsigned add16(struct cpu *cpu, unsigned x, unsigned y, unsigned carry_in
     int hcarry = hsum >> 12;
     uint64_t usum = x + y + carry_in;
     // int64_t ssum = (int64_t)(signed short)x + (int64_t)(signed short)y + (int64_t)(signed short)carry_in;
-    int carry_out = usum != (uint8_t)usum;
+    int carry_out = usum != (uint16_t)usum;
     // int overflow = ssum != (int8_t)ssum;
     
-    uint8_t result = usum;
+    uint16_t result = usum;
     // int zero = !result;
     // int neg = result >> 15;
 
@@ -128,14 +129,22 @@ int main(int argc, char const *argv[]) {
 
     printf("got %zd bytes\n", fread(ram + 256, 1, 65536 - 256, fp));
     fclose(fp);
+    fp = fopen("debug.txt", "wb");
     
     struct cpu _cpu;
     struct cpu *cpu = &_cpu;
+    memset(cpu, 0, sizeof *cpu);
     cpu->pc = 256; //where CPM starts program
+    ram[5] = 0xc3;
+    ram[6] = 0xf5;
+    ram[7] = 0xfe;
+    cpu->af = 0x0000;
+    cpu->sp = 0xfeed;
 
     unsigned long long ran = 0;
     for(;;){
         printf("Bytes %02hhx %02hhx %02hhx %02hhx at 0x%04hx after %llu run\n",ram[cpu->pc],ram[cpu->pc+1],ram[cpu->pc+2],ram[cpu->pc+3],cpu->pc,ran++);
+        fprintf(fp, "Bytes %02hhx %02hhx %02hhx %02hhx at 0x%04hx after %llu run...af: %04hx, sp: %04hx, hl: %04hx, de: %04hx\n",ram[cpu->pc],ram[cpu->pc+1],ram[cpu->pc+2],ram[cpu->pc+3],cpu->pc,ran, cpu->af, cpu->sp, cpu->hl, cpu->de);
         unsigned char opcode = ram[cpu->pc];
         unsigned short oldpc = cpu->pc++; // increment instruction pointer
         unsigned char byte1;
@@ -162,6 +171,7 @@ int main(int argc, char const *argv[]) {
             byte1 = ram[cpu->pc++];
             byte2 = ram[cpu->pc++];
             cpu->hl = ram[byte1 | (byte2 << 8)];
+            cpu->hl |= ram[(byte1 | (byte2 << 8)) + 1] << 8;
             break;
         case 0xed: // Extended Instructions
             switch(ram[cpu->pc++]){
@@ -201,6 +211,9 @@ int main(int argc, char const *argv[]) {
         case 0x19: // add hl, de
             cpu->f_h = ((cpu->hl & 0x0fff) + (cpu->de & 0x0fff)) >> 12;
             cpu->hl += cpu->de;
+
+            //cpu->hl = add16(cpu, cpu->hl, cpu->de, 0);
+            //cpu->f_n = 1;
             break;
         case 0xd5: // push de
             cpu->sp--;
@@ -371,11 +384,13 @@ int main(int argc, char const *argv[]) {
 
             if(cpu->pc == 5){
                 printf("CP/M was called at 0x%04hhx\n", oldpc);
+                exit(2);
             }
 
             break;
         case 0xf3: // di
             printf("Interrupts off, di instruction not written\n");
+            fprintf(fp, "Interrupts off, di instruction not written\n");
             break;
         case 0x22: // ld (**), hl
             byte1 = ram[cpu->pc++];
