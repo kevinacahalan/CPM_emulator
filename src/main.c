@@ -4,8 +4,6 @@
 #include <string.h>
 
 
-unsigned char ram[65536 + 3] = {0}; // 3 for printing opcode bytes easily
-
 struct cpu{
     unsigned short pc; // Instruction Pointer  /  Program Counter
     unsigned short sp; // stack pointer
@@ -118,33 +116,40 @@ static unsigned add16(struct cpu *cpu, unsigned x, unsigned y, unsigned carry_in
     return result;
 }
 
+static void or_8(struct cpu *cpu, unsigned char val){
+    cpu->a |= val;
+    cpu->f_c = 0;
+    cpu->f_n = 0;
+    cpu->f_pv = parity(cpu->a);
+    cpu->f_h = 0;
+    cpu->f_z = !cpu->a;
+    cpu->f_s = cpu->a >> 7; // take sign bit and put it in f_s
+}
 
-int main(int argc, char const *argv[]) {
-    (void)argc;
-    FILE *fp = fopen(argv[1], "rb");
-    if (!fp){
-        puts("No input file");
-        return 1;
-    }
-
-    printf("got %zd bytes\n", fread(ram + 256, 1, 65536 - 256, fp));
-    fclose(fp);
-    fp = fopen("debug.txt", "wb");
-    
-    struct cpu _cpu;
-    struct cpu *cpu = &_cpu;
-    memset(cpu, 0, sizeof *cpu);
-    cpu->pc = 256; //where CPM starts program
-    ram[5] = 0xc3;
-    ram[6] = 0xf5;
-    ram[7] = 0xfe;
-    cpu->af = 0x0000;
-    cpu->sp = 0xfeed;
-
+static void do_emulation(struct cpu *cpu, unsigned char *restrict ram){
+    FILE *fp = fopen("debug.txt", "wb");
     unsigned long long ran = 0;
     for(;;){
-        printf("Bytes %02hhx %02hhx %02hhx %02hhx at 0x%04hx after %llu run\n",ram[cpu->pc],ram[cpu->pc+1],ram[cpu->pc+2],ram[cpu->pc+3],cpu->pc,ran++);
-        fprintf(fp, "Bytes %02hhx %02hhx %02hhx %02hhx at 0x%04hx after %llu run...af: %04hx, sp: %04hx, hl: %04hx, de: %04hx\n",ram[cpu->pc],ram[cpu->pc+1],ram[cpu->pc+2],ram[cpu->pc+3],cpu->pc,ran, cpu->af, cpu->sp, cpu->hl, cpu->de);
+        printf("Bytes %02hhx %02hhx %02hhx %02hhx at 0x%04hx after %llu run\n",
+            ram[cpu->pc],
+            ram[cpu->pc+1],
+            ram[cpu->pc+2],
+            ram[cpu->pc+3],
+            cpu->pc,
+            ran++
+        );
+        fprintf(fp, "Bytes %02hhx %02hhx %02hhx %02hhx at 0x%04hx after %llu run...af: %04hx, sp: %04hx, hl: %04hx, de: %04hx\n",
+            ram[cpu->pc],
+            ram[cpu->pc+1],
+            ram[cpu->pc+2],
+            ram[cpu->pc+3],
+            cpu->pc,ran, 
+            cpu->af, 
+            cpu->sp, 
+            cpu->hl, 
+            cpu->de
+        );
+
         unsigned char opcode = ram[cpu->pc];
         unsigned short oldpc = cpu->pc++; // increment instruction pointer
         unsigned char byte1;
@@ -456,13 +461,7 @@ int main(int argc, char const *argv[]) {
             cpu->a = ram[cpu->hl];
             break;
         case 0xb4: // or h
-            cpu->a |= cpu->h;
-            cpu->f_c = 0;
-            cpu->f_n = 0;
-            cpu->f_pv = parity(cpu->a);
-            cpu->f_h = 0;
-            cpu->f_z = !cpu->a;
-            cpu->f_s = cpu->a >> 7; // take sign bit and put it in f_s
+            or_8(cpu, cpu->h);
             break;
         case 0x4f: // ld c,a
             cpu->c = cpu->a;
@@ -475,13 +474,7 @@ int main(int argc, char const *argv[]) {
             cpu->b = ram[cpu->sp++];
             break;
         case 0xb5: // or l
-            cpu->a |= cpu->l;
-            cpu->f_c = 0;
-            cpu->f_n = 0;
-            cpu->f_pv = parity(cpu->a);
-            cpu->f_h = 0;
-            cpu->f_z = !cpu->a;
-            cpu->f_s = cpu->a >> 7; // take sign bit and put it in f_s
+            or_8(cpu, cpu->l);
             break;
         case 0x28: // jr z,*
             byte1 = ram[cpu->pc++];
@@ -504,13 +497,7 @@ int main(int argc, char const *argv[]) {
             cpu->pc = (short)(signed char)byte1 + oldpc;
             break;
         case 0xb7: // or a
-            cpu->a |= cpu->a;
-            cpu->f_c = 0;
-            cpu->f_n = 0;
-            cpu->f_pv = parity(cpu->a);
-            cpu->f_h = 0;
-            cpu->f_z = !cpu->a;
-            cpu->f_s = cpu->a >> 7; // take sign bit and put it in f_s
+            or_8(cpu, cpu->a);
             break;
         default:
 fail:
@@ -519,6 +506,35 @@ fail:
             break;
         }
     }
+
+    fclose(fp);
+}
+
+
+int main(int argc, char const *argv[]) {
+    (void)argc;
+    unsigned char ram[65536 + 3] = {0}; // 3 for printing opcode bytes easily
+
+    FILE *fp = fopen(argv[1], "rb");
+    if (!fp){
+        puts("No input file");
+        return 1;
+    }else{
+        printf("got %zd bytes\n", fread(ram + 256, 1, 65536 - 256, fp));
+        fclose(fp);
+    }
+    
+    struct cpu _cpu;
+    struct cpu *cpu = &_cpu;
+    memset(cpu, 0, sizeof *cpu);
+    cpu->pc = 256; //where CPM starts program
+    ram[5] = 0xc3;
+    ram[6] = 0xf5;
+    ram[7] = 0xfe;
+    cpu->af = 0x0000;
+    cpu->sp = 0xfeed;
+
+    do_emulation(cpu, ram);
 
     return 0;
 }
