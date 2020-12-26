@@ -101,7 +101,7 @@ static unsigned add16(struct cpu *cpu, unsigned x, unsigned y, unsigned carry_in
     int hcarry = hsum >> 12;
     uint64_t usum = x + y + carry_in;
     // int64_t ssum = (int64_t)(signed short)x + (int64_t)(signed short)y + (int64_t)(signed short)carry_in;
-    int carry_out = usum != (uint16_t)usum;
+    unsigned carry_out = usum != (uint16_t)usum;
     // int overflow = ssum != (int8_t)ssum;
     
     uint16_t result = usum;
@@ -187,6 +187,13 @@ int main(int argc, char const *argv[]) {
                 while ((unsigned short)--cpu->bc);
                 
                 break;
+            //case 0x42: // sbc hl,bc
+                //cpu->hl = add16(cpu, cpu->hl, ~cpu->bc, cpu->f_c);
+                //cpu->hl = add16(cpu, cpu->hl, ~cpu->bc, !cpu->f_c);
+                //cpu->hl = add16(cpu, cpu->hl, ~cpu->bc, 2+~cpu->f_c);
+                //cpu->hl = add16(cpu, cpu->hl, ~(cpu->bc + cpu->f_c), 1);
+                //cpu->f_n = 1;
+                //break;
             default:
                 goto fail;
             }
@@ -209,11 +216,11 @@ int main(int argc, char const *argv[]) {
             cpu->hl++;
             break;
         case 0x19: // add hl, de
-            cpu->f_h = ((cpu->hl & 0x0fff) + (cpu->de & 0x0fff)) >> 12;
-            cpu->hl += cpu->de;
+            //cpu->f_h = ((cpu->hl & 0x0fff) + (cpu->de & 0x0fff)) >> 12;
+            //cpu->hl += cpu->de;
 
-            //cpu->hl = add16(cpu, cpu->hl, cpu->de, 0);
-            //cpu->f_n = 1;
+            cpu->hl = add16(cpu, cpu->hl, cpu->de, 0);
+            cpu->f_n = 0;
             break;
         case 0xd5: // push de
             cpu->sp--;
@@ -280,7 +287,7 @@ int main(int argc, char const *argv[]) {
                 break;
             case 0x39: // add ix,sp
                 cpu->ix = add16(cpu, cpu->ix, cpu->sp, 0);
-                cpu->f_n = 1;
+                cpu->f_n = 0;
                 break;
             default:
                 goto fail;
@@ -301,7 +308,7 @@ int main(int argc, char const *argv[]) {
             break;
         case 0x39: // add hl,sp
             cpu->hl = add16(cpu, cpu->hl, cpu->sp, 0);
-            cpu->f_n = 1;
+            cpu->f_n = 0;
             break;
         case 0x3a: // ld a,(**)
             byte1 = ram[cpu->pc++];
@@ -450,6 +457,54 @@ int main(int argc, char const *argv[]) {
             break;
         case 0xb4: // or h
             cpu->a |= cpu->h;
+            cpu->f_c = 0;
+            cpu->f_n = 0;
+            cpu->f_pv = parity(cpu->a);
+            cpu->f_h = 0;
+            cpu->f_z = !cpu->a;
+            cpu->f_s = cpu->a >> 7; // take sign bit and put it in f_s
+            break;
+        case 0x4f: // ld c,a
+            cpu->c = cpu->a;
+            break;
+        case 0x47: // ld b,a
+            cpu->b = cpu->a;
+            break;
+        case 0xc1: // pop bc
+            cpu->c = ram[cpu->sp++];
+            cpu->b = ram[cpu->sp++];
+            break;
+        case 0xb5: // or l
+            cpu->a |= cpu->l;
+            cpu->f_c = 0;
+            cpu->f_n = 0;
+            cpu->f_pv = parity(cpu->a);
+            cpu->f_h = 0;
+            cpu->f_z = !cpu->a;
+            cpu->f_s = cpu->a >> 7; // take sign bit and put it in f_s
+            break;
+        case 0x28: // jr z,*
+            byte1 = ram[cpu->pc++];
+            if(cpu->f_z)
+                cpu->pc = (short)(signed char)byte1 + oldpc;
+            break;
+        case 0x09: // add hl,bc
+            cpu->hl = add16(cpu, cpu->hl, cpu->bc, 0);
+            cpu->f_n = 0;
+            break;
+        case 0x4e: // ld c,(hl)
+            cpu->c = ram[cpu->hl];
+            break;
+        case 0x06: // ld b,*
+            byte1 = ram[cpu->pc++];
+            cpu->b = byte1;
+            break;
+        case 0x18: // jr *
+            byte1 = ram[cpu->pc++];
+            cpu->pc = (short)(signed char)byte1 + oldpc;
+            break;
+        case 0xb7: // or a
+            cpu->a |= cpu->a;
             cpu->f_c = 0;
             cpu->f_n = 0;
             cpu->f_pv = parity(cpu->a);
