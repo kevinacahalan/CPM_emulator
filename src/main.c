@@ -126,6 +126,49 @@ static void or_8(struct cpu *cpu, unsigned char val){
     cpu->f_s = cpu->a >> 7; // take sign bit and put it in f_s
 }
 
+static unsigned char pop_8(struct cpu *restrict const cpu, const unsigned char *restrict const ram){
+    return ram[cpu->sp++];
+}
+
+static unsigned short pop_16(struct cpu *restrict const cpu, const unsigned char *restrict const ram){
+    unsigned char low = ram[cpu->sp++];
+    unsigned char high = ram[cpu->sp++];
+
+    return high << 8 | low;
+}
+
+static void push_8(struct cpu *restrict const cpu, unsigned char *restrict const ram, unsigned char val){
+    cpu->sp--;
+    ram[cpu->sp] = val; // push low bits
+}
+
+static void push_16(struct cpu *restrict const cpu, unsigned char *restrict const ram, unsigned short val){
+    cpu->sp--;
+    ram[cpu->sp] = val>>8; // push high bits
+    cpu->sp--;
+    ram[cpu->sp] = val; // push low bits
+}
+
+static unsigned short load_16(struct cpu *restrict const cpu, const unsigned char *restrict const ram, unsigned short addr){
+    (void)cpu; // I like handing cpu even though I am not using it
+    unsigned char byte1 = ram[addr++];
+    unsigned char byte2 = ram[addr];
+    return byte1 | (byte2 << 8);
+}
+
+static void store_16(struct cpu *restrict const cpu, unsigned char *restrict const ram, unsigned short val, unsigned short addr){
+    (void)cpu; // I like handing cpu even though I am not using it
+    ram[addr] = val;                            // write low bits
+    ram[(unsigned short)(addr + 1)] = val >> 8; // write high bits
+}
+
+static unsigned short imm_16(struct cpu *restrict const cpu, const unsigned char *restrict const ram){
+    unsigned char low = ram[cpu->pc++];
+    unsigned char high = ram[cpu->pc++];
+
+    return high << 8 | low;
+}
+
 static void do_emulation(struct cpu *cpu, unsigned char *restrict ram){
     FILE *fp = fopen("debug.txt", "wb");
     unsigned long long ran = 0;
@@ -159,32 +202,22 @@ static void do_emulation(struct cpu *cpu, unsigned char *restrict ram){
 
         switch (opcode){
         case 0xc3: // jp **
-            byte1 = ram[cpu->pc++];
-            byte2 = ram[cpu->pc++];
-            cpu->pc = byte1 | (byte2 << 8);
+            cpu->pc = imm_16(cpu, ram);
             break;
         case 0x3e: // ld a,*
             byte1 = ram[cpu->pc++];
             cpu->a = byte1;
             break;
         case 0x32: // ld (**), a
-            byte1 = ram[cpu->pc++];
-            byte2 = ram[cpu->pc++];
-            ram[byte1 | (byte2 << 8)] = cpu->a;
+            ram[imm_16(cpu, ram)] = cpu->a;
             break;
         case 0x2a: // ld hl, (**)
-            byte1 = ram[cpu->pc++];
-            byte2 = ram[cpu->pc++];
-            cpu->hl = ram[byte1 | (byte2 << 8)];
-            cpu->hl |= ram[(byte1 | (byte2 << 8)) + 1] << 8;
+            cpu->hl = load_16(cpu, ram, imm_16(cpu, ram));
             break;
         case 0xed: // Extended Instructions
             switch(ram[cpu->pc++]){
             case 0x7b: // ld sp, (**)
-                byte1 = ram[cpu->pc++];
-                byte2 = ram[cpu->pc++];
-                cpu->sp = ram[byte1 | (byte2 << 8)];
-                cpu->sp |= ram[(byte1 | (byte2 << 8)) + 1] << 8;
+                cpu->sp = load_16(cpu, ram, imm_16(cpu, ram));
                 break;
             case 0xb0: // ldir
                 //basically a memcpy
@@ -228,31 +261,21 @@ static void do_emulation(struct cpu *cpu, unsigned char *restrict ram){
             cpu->f_n = 0;
             break;
         case 0xd5: // push de
-            cpu->sp--;
-            ram[cpu->sp] = cpu->d;
-            cpu->sp--;
-            ram[cpu->sp] = cpu->e;
+            push_16(cpu, ram, cpu->de);
             break;
         case 0x01: // ld bc, **
-            byte1 = ram[cpu->pc++];
-            byte2 = ram[cpu->pc++];
-            cpu->bc = byte1 | (byte2 << 8);
+            cpu->bc = imm_16(cpu, ram);
             break;
         case 0xfd: // IY Instructions
             switch(ram[cpu->pc++]){
             case 0x21: // ld iy, **
-                byte1 = ram[cpu->pc++];
-                byte2 = ram[cpu->pc++];
-                cpu->iy = byte1 | (byte2 << 8);
+                cpu->iy = imm_16(cpu, ram);
                 break;
             case 0xe9: // jp (iy) ...the syntex of this instruction is off
                 cpu->pc = cpu->iy;
                 break;
             case 0xe5: // push iy
-                cpu->sp--;
-                ram[cpu->sp] = cpu->iy >> 8;
-                cpu->sp--;
-                ram[cpu->sp] = cpu->iy;
+                push_16(cpu, ram, cpu->iy);
                 break;
             default:
                 goto fail;
@@ -271,24 +294,17 @@ static void do_emulation(struct cpu *cpu, unsigned char *restrict ram){
             cpu->f_n = 1;
             break;
         case 0xca: // jp z,**
-            byte1 = ram[cpu->pc++];
-            byte2 = ram[cpu->pc++];
+            tmp_ushort = imm_16(cpu, ram);
             if (cpu->f_z)
-                cpu->pc = byte1 | (byte2 << 8);
+                cpu->pc = tmp_ushort;
             break;
         case 0xdd: // IX Instructions
             switch(ram[cpu->pc++]){
             case 0xe5: // push ix
-            // page 117 om z80 cpu manual
-                cpu->sp--;
-                ram[cpu->sp] = cpu->ix>>8; // push high bits
-                cpu->sp--;
-                ram[cpu->sp] = cpu->ix; // push low bits
+                push_16(cpu, ram, cpu->ix);
                 break;
             case 0x21: // ld ix,**
-                byte1 = ram[cpu->pc++];
-                byte2 = ram[cpu->pc++];
-                cpu->ix = byte1 | (byte2 << 8);
+                cpu->ix = imm_16(cpu, ram);
                 break;
             case 0x39: // add ix,sp
                 cpu->ix = add16(cpu, cpu->ix, cpu->sp, 0);
@@ -299,10 +315,7 @@ static void do_emulation(struct cpu *cpu, unsigned char *restrict ram){
             }
             break;
         case 0xc5: // push bc
-            cpu->sp--;
-            ram[cpu->sp] = cpu->b;
-            cpu->sp--;
-            ram[cpu->sp] = cpu->c;
+            push_16(cpu, ram, cpu->bc);
             break;
         case 0x6f: // ld l,a
             cpu->l = cpu->a;
@@ -316,9 +329,7 @@ static void do_emulation(struct cpu *cpu, unsigned char *restrict ram){
             cpu->f_n = 0;
             break;
         case 0x3a: // ld a,(**)
-            byte1 = ram[cpu->pc++];
-            byte2 = ram[cpu->pc++];
-            cpu->a = ram[byte1 | (byte2 << 8)];
+            cpu->a = ram[imm_16(cpu, ram)];
             break;
         case 0xbc: // cp h
             add8(cpu, cpu->a, ~cpu->h, 1);
@@ -372,27 +383,15 @@ static void do_emulation(struct cpu *cpu, unsigned char *restrict ram){
             cpu->h = cpu->a;
             break;
         case 0xe5: //push hl
-            cpu->sp--;
-            ram[cpu->sp] = cpu->h;
-            cpu->sp--;
-            ram[cpu->sp] = cpu->l;
+            push_16(cpu, ram, cpu->hl);
             break;
         case 0x21: // ld hl,**
-            byte1 = ram[cpu->pc++];
-            byte2 = ram[cpu->pc++];
-            cpu->hl = byte1 | (byte2 << 8);
+            cpu->hl = imm_16(cpu, ram);
             break;
         case 0xcd: // call **
-            byte1 = ram[cpu->pc++];
-            byte2 = ram[cpu->pc++];
-
-            // push pc
-            cpu->sp--;
-            ram[cpu->sp] = cpu->pc >> 8;
-            cpu->sp--;
-            ram[cpu->sp] = cpu->pc;
-
-            cpu->pc = byte1 | (byte2 << 8);
+            tmp_ushort = imm_16(cpu, ram);
+            push_16(cpu, ram, cpu->pc);
+            cpu->pc = tmp_ushort;
 
             if(cpu->pc == 5){
                 printf("CP/M was called at 0x%04hhx\n", oldpc);
@@ -405,27 +404,18 @@ static void do_emulation(struct cpu *cpu, unsigned char *restrict ram){
             fprintf(fp, "Interrupts off, di instruction not written\n");
             break;
         case 0x22: // ld (**), hl
-            byte1 = ram[cpu->pc++];
-            byte2 = ram[cpu->pc++];
-            ram[byte1 | (byte2 << 8)] = cpu->hl;
-            ram[(unsigned short)((byte1 | (byte2 << 8)) + 1)] = cpu->hl >> 8;
+            store_16(cpu, ram, cpu->hl, imm_16(cpu, ram));
             break;
         case 0xe1: // pop hl
-            cpu->l = ram[cpu->sp++];
-            cpu->h = ram[cpu->sp++];
+            cpu->hl = pop_16(cpu, ram);
             break;
         case 0xe3: // ex (sp),hl
             tmp_ushort = cpu->hl;
-            cpu->l = ram[cpu->sp]; 
-            cpu->h = ram[cpu->sp + 1];
-            ram[cpu->sp] = tmp_ushort;
-            ram[cpu->sp + 1] = tmp_ushort >> 8;
+            cpu->hl = load_16(cpu, ram, cpu->sp);
+            store_16(cpu, ram, tmp_ushort, cpu->sp);
             break;
         case 0xf5: // push af
-            cpu->sp--;
-            ram[cpu->sp] = cpu->a;
-            cpu->sp--;
-            ram[cpu->sp] = cpu->f;
+            push_16(cpu, ram, cpu->af);
             break;
         case 0x08: // ex af,af'
             tmp_ushort = cpu->af;
@@ -454,8 +444,7 @@ static void do_emulation(struct cpu *cpu, unsigned char *restrict ram){
             cpu->a = cpu->h;
             break;
         case 0xd1: // pop de
-            cpu->e = ram[cpu->sp++];
-            cpu->d = ram[cpu->sp++];
+            cpu->de = pop_16(cpu, ram);
             break;
         case 0x7e: // ld a,(hl)
             cpu->a = ram[cpu->hl];
@@ -470,8 +459,7 @@ static void do_emulation(struct cpu *cpu, unsigned char *restrict ram){
             cpu->b = cpu->a;
             break;
         case 0xc1: // pop bc
-            cpu->c = ram[cpu->sp++];
-            cpu->b = ram[cpu->sp++];
+            cpu->bc = pop_16(cpu, ram);
             break;
         case 0xb5: // or l
             or_8(cpu, cpu->l);
