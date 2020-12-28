@@ -236,7 +236,9 @@ static void do_emulation(struct cpu *cpu, unsigned char *restrict ram){
         unsigned short oldpc = cpu->pc++; // increment instruction pointer
         unsigned char byte1;
         unsigned char byte2;
+        unsigned char tmp_uchar;
         unsigned short tmp_ushort;
+        unsigned char *ptr_u8;
 
 
         switch (opcode){
@@ -279,6 +281,24 @@ static void do_emulation(struct cpu *cpu, unsigned char *restrict ram){
                 break;
             case 0x53: // ld (**),de
                 store_16(cpu, ram, cpu->de, imm_16(cpu, ram));
+                break;
+            case 0x52: // sbc hl,de
+                // Could be bug here, one of the next 4 lines is probably correct, don't know which
+                //cpu->hl = add16(cpu, cpu->hl, ~cpu->de, cpu->f_c);
+                //cpu->hl = add16(cpu, cpu->hl, ~cpu->de, !cpu->f_c);
+                //cpu->hl = add16(cpu, cpu->hl, ~cpu->de, 2+~cpu->f_c);
+                cpu->hl = add16(cpu, cpu->hl, ~(cpu->de + cpu->f_c), 1);
+                cpu->f_n = 1;
+                break;
+            case 0x5b: // ld de,(**)
+                cpu->de = load_16(cpu, ram, imm_16(cpu, ram));
+                break;
+            case 0x4b: // ld bc,(**)
+                cpu->bc = load_16(cpu, ram, imm_16(cpu, ram));
+                break;
+            case 0x44: // neg
+                cpu->a = add8(cpu, 0, ~cpu->a, 1);
+                cpu->f_n = 1;
                 break;
             default:
                 goto fail;
@@ -398,7 +418,9 @@ static void do_emulation(struct cpu *cpu, unsigned char *restrict ram){
             cpu->b = ram[cpu->hl];
             break;
         case 0x24: // inc h
-            cpu->h++;
+            byte2 = cpu->f_c;
+            cpu->h = add8(cpu, cpu->h, 1, 0);
+            cpu->f_c = byte2;
             break;
         case 0x66: // ld h,(hl)
             cpu->h = ram[cpu->hl];
@@ -585,79 +607,111 @@ static void do_emulation(struct cpu *cpu, unsigned char *restrict ram){
             cpu->f_c = cpu->a & 1;
             break;
         case 0xcb:
-            switch(ram[cpu->pc++]){
-            case 0x3c: // srl h
-                cpu->f_c = cpu->h & 1;
-                cpu->h >>= 1;
-                cpu->f_n = 0;
-                cpu->f_h = 0;
-                cpu->f_z = !cpu->h;
-                cpu->f_s = cpu->h >> 7;
-                cpu->f_pv = parity(cpu->h);
+            byte1 = ram[cpu->pc++];
+            
+            switch (byte1 & 0x07){
+            case 0:
+                ptr_u8 = &cpu->b;
                 break;
-            case 0x1d: // rr l
-                cpu->f_c = cpu->l & 1;
-                cpu->l = cpu->l >> 1 | cpu->l << 7;
-                cpu->f_n = 0;
-                cpu->f_h = 0;
-                cpu->f_z = !cpu->l;
-                cpu->f_s = cpu->l >> 7;
-                cpu->f_pv = parity(cpu->l);
+            case 1:
+                ptr_u8 = &cpu->c;
                 break;
-            case 0x10: // rl b
-                byte2 = cpu->b;
-                cpu->b = cpu->b << 1 | cpu->f_c;
-                cpu->f_c = byte2 >> 7;
-                cpu->f_n = 0;
-                cpu->f_h = 0;
-                cpu->f_z = !cpu->b;
-                cpu->f_s = cpu->b >> 7;
-                cpu->f_pv = parity(cpu->b);
+            case 2:
+                ptr_u8 = &cpu->d;
                 break;
-            case 0x3a: // srl d
-                cpu->f_c = cpu->d & 1;
-                cpu->d >>= 1;
-                cpu->f_n = 0;
-                cpu->f_h = 0;
-                cpu->f_z = !cpu->d;
-                cpu->f_s = cpu->d >> 7;
-                cpu->f_pv = parity(cpu->d);
+            case 3:
+                ptr_u8 = &cpu->e;
                 break;
-            case 0x1b: // rr e
-                cpu->f_c = cpu->e & 1;
-                cpu->e = cpu->e >> 1 | cpu->e << 7;
-                cpu->f_n = 0;
-                cpu->f_h = 0;
-                cpu->f_z = !cpu->e;
-                cpu->f_s = cpu->e >> 7;
-                cpu->f_pv = parity(cpu->e);
+            case 4:
+                ptr_u8 = &cpu->h;
                 break;
-            case 0x21: // sla c
-                cpu->f_c = cpu->c >> 7 & 1;
-                cpu->c <<= 1;
-                cpu->f_n = 0;
-                cpu->f_h = 0;
-                cpu->f_z = !cpu->c;
-                cpu->f_s = cpu->c >> 7;
-                cpu->f_pv = parity(cpu->c);
+            case 5:
+                ptr_u8 = &cpu->l;
                 break;
-            case 0x3b: // srl e
-                cpu->f_c = cpu->e & 1;
-                cpu->e >>= 1;
-                cpu->f_n = 0;
-                cpu->f_h = 0;
-                cpu->f_z = !cpu->e;
-                cpu->f_s = cpu->e >> 7;
-                cpu->f_pv = parity(cpu->e);
+            case 6:
+                ptr_u8 = cpu->hl + ram;
                 break;
-            case 0x41: // bit 0,c
-                cpu->f_n = 0;
-                cpu->f_h = 1;
-                cpu->f_z = cpu->c & 1;
-                
+            case 7:
+                ptr_u8 = &cpu->a;
                 break;
             default:
-                goto fail;
+                __builtin_unreachable();
+                break;
+            }
+
+            switch (byte1 >> 6){
+            case 0:
+                switch (byte1 >> 3 & 0x07){
+                case 0: // rlc
+                    puts("asdasd");
+                    exit(2);
+                    break;
+                case 1: // rrc
+                    puts("asdasd");
+                    exit(2);
+                    break;
+                case 2: // rl
+                    byte2 = *ptr_u8;
+                    *ptr_u8 = *ptr_u8 << 1 | cpu->f_c;
+                    cpu->f_c = byte2 >> 7;
+                    cpu->f_n = 0;
+                    cpu->f_h = 0;
+                    cpu->f_z = !*ptr_u8;
+                    cpu->f_s = *ptr_u8 >> 7;
+                    cpu->f_pv = parity(*ptr_u8);
+                    break;
+                case 3: // rr
+                    cpu->f_c = *ptr_u8 & 1;
+                    *ptr_u8 = *ptr_u8 >> 1 | *ptr_u8 << 7;
+                    cpu->f_n = 0;
+                    cpu->f_h = 0;
+                    cpu->f_z = !*ptr_u8;
+                    cpu->f_s = *ptr_u8 >> 7;
+                    cpu->f_pv = parity(*ptr_u8);
+                    break;
+                case 4: // sla
+                case 6: // sll ( undocumented )
+                    cpu->f_c = *ptr_u8 >> 7 & 1;
+                    *ptr_u8 <<= 1;
+                    cpu->f_n = 0;
+                    cpu->f_h = 0;
+                    cpu->f_z = !*ptr_u8;
+                    cpu->f_s = *ptr_u8 >> 7;
+                    cpu->f_pv = parity(*ptr_u8);
+                    break;
+                case 5: // sra
+                    puts("asdasd");
+                    exit(2);
+                    break;
+                case 7: // srl
+                    cpu->f_c = *ptr_u8 & 1;
+                    *ptr_u8 >>= 1;
+                    cpu->f_n = 0;
+                    cpu->f_h = 0;
+                    cpu->f_z = !*ptr_u8;
+                    cpu->f_s = *ptr_u8 >> 7;
+                    cpu->f_pv = parity(*ptr_u8);
+                    break;
+                default:
+                    __builtin_unreachable();
+                    break;
+                }
+                break;
+            case 1:
+                cpu->f_z = ~*ptr_u8 >> (byte1 >> 3 & 0x07);
+                cpu->f_h = 1;
+                cpu->f_n = 0;
+                break;
+            case 2:
+                *ptr_u8 &= ~(1 << (byte1 >> 3 & 0x07));
+                break;
+            case 3:
+                *ptr_u8 |= 1 << (byte1 >> 3 & 0x07);
+                break;
+            
+            default:
+                __builtin_unreachable();
+                break;
             }
             break;
         case 0x3d: // dec a
@@ -683,6 +737,56 @@ static void do_emulation(struct cpu *cpu, unsigned char *restrict ram){
             break;
         case 0xc9: // ret
             cpu->pc = pop_16(cpu,ram);
+            break;
+        case 0xd8: // ret c
+            if (cpu->f_c)
+                cpu->pc = pop_16(cpu,ram);
+            break;
+        case 0x7a: // ld a,d
+            cpu->a = cpu->d;
+            break;
+        case 0xb3: // or e
+            or_8(cpu, cpu->e);
+            break;
+        case 0x38: // jr c,*
+            byte1 = ram[cpu->pc++];
+            if(cpu->f_c)
+                cpu->pc = (short)(signed char)byte1 + cpu->pc;
+            break;
+        case 0x77: // ld (hl),a
+            ram[cpu->hl] = cpu->a;
+            break;
+        case 0x11: // ld de,**
+            cpu->de = imm_16(cpu, ram);
+            break;
+        case 0x12: // ld (de),a
+            ram[cpu->de] = cpu->a;
+            break;
+        case 0x5d: // ld e,l
+            cpu->e = cpu->l;
+            break;
+        case 0x54: // ld d,h
+            cpu->d = cpu->h;
+            break;
+        case 0x0b: // dec bc
+            cpu->bc--;
+            break;
+        case 0x36: // ld (hl),*
+            ram[cpu->hl] = ram[cpu->pc++];
+            break;
+        case 0x5f: // ld e,a
+            cpu->e = cpu->a;
+            break;
+        case 0x6e: // ld l,(hl)
+            cpu->l = ram[cpu->hl];
+            break;
+        case 0x16: // ld d,*
+            cpu->d = ram[cpu->pc++];
+            break;
+        case 0x1c: // inc e
+            byte2 = cpu->f_c;
+            cpu->e = add8(cpu, cpu->e, 1, 0);
+            cpu->f_c = byte2;
             break;
         default:
 fail:
