@@ -72,12 +72,12 @@ static unsigned char parity(unsigned char p){
 
 static unsigned add8(struct cpu *cpu, unsigned x, unsigned y, unsigned carry_in){
 
-    uint64_t hsum = (x & 0xf) + (y & 0xf) + carry_in;
+    uint64_t hsum = (x & 0xf) + (y & 0xf) + (carry_in & 1);
     int hcarry = hsum >> 4;
-    uint64_t usum = x + y + carry_in;
+    uint64_t usum = (x & 0xff) + (y & 0xff) + (carry_in & 1);
     int64_t ssum = (int64_t)(signed char)x + (int64_t)(signed char)y + (int64_t)(signed char)carry_in;
     int carry_out = usum != (uint8_t)usum;
-    int overflow = ssum != (int8_t)ssum;
+    int overflow = ((usum ^ x) & (usum ^ y)) >> 7;
     
     uint8_t result = usum;
     int zero = !result;
@@ -90,6 +90,26 @@ static unsigned add8(struct cpu *cpu, unsigned x, unsigned y, unsigned carry_in)
     cpu->f_h = hcarry;
     // cpu->f_n   set by caller
 
+
+    // uint64_t hsum = (x & 0xf) + (y & 0xf) + carry_in;
+    // int hcarry = hsum >> 4;
+    // uint64_t usum = x + y + carry_in;
+    // int64_t ssum = (int64_t)(signed char)x + (int64_t)(signed char)y + (int64_t)(signed char)carry_in;
+    // int carry_out = usum != (uint8_t)usum;
+    // int overflow = ssum != (int8_t)ssum;
+    
+    // uint8_t result = usum;
+    // int zero = !result;
+    // int neg = result >> 7;
+
+    // cpu->f_z = zero;
+    // cpu->f_pv = overflow;  //might need to be !overflow
+    // cpu->f_c = carry_out;
+    // cpu->f_s = neg;
+    // cpu->f_h = hcarry;
+    // // cpu->f_n   set by caller
+
+
     return result;
 }
 
@@ -97,7 +117,7 @@ static unsigned add8(struct cpu *cpu, unsigned x, unsigned y, unsigned carry_in)
 static unsigned add16(struct cpu *cpu, unsigned x, unsigned y, unsigned carry_in){
     uint64_t hsum = (x & 0xfff) + (y & 0xfff) + carry_in;
     int hcarry = hsum >> 12;
-    uint64_t usum = x + y + carry_in;
+    uint64_t usum = (x & 0xffff) + (y & 0xffff) + carry_in;
     // int64_t ssum = (int64_t)(signed short)x + (int64_t)(signed short)y + (int64_t)(signed short)carry_in;
     unsigned carry_out = usum != (uint16_t)usum;
     // int overflow = ssum != (int8_t)ssum;
@@ -112,6 +132,28 @@ static unsigned add16(struct cpu *cpu, unsigned x, unsigned y, unsigned carry_in
     // cpu->f_s = neg;
     cpu->f_h = hcarry;
     // cpu->f_n   set by caller
+
+
+
+    // uint64_t hsum = (x & 0xfff) + (y & 0xfff) + carry_in;
+    // int hcarry = hsum >> 12;
+    // uint64_t usum = x + y + carry_in;
+    // // int64_t ssum = (int64_t)(signed short)x + (int64_t)(signed short)y + (int64_t)(signed short)carry_in;
+    // unsigned carry_out = usum != (uint16_t)usum;
+    // // int overflow = ssum != (int8_t)ssum;
+    
+    // uint16_t result = usum;
+    // // int zero = !result;
+    // // int neg = result >> 15;
+
+    // // cpu->f_z = zero;
+    // // cpu->f_pv = overflow;  //might need to be !overflow
+    // cpu->f_c = carry_out;
+    // // cpu->f_s = neg;
+    // cpu->f_h = hcarry;
+    // // cpu->f_n   set by caller
+
+
 
     return result;
 }
@@ -211,15 +253,21 @@ static unsigned short bdos(
 static void do_emulation(struct cpu *cpu, unsigned char *restrict ram){
     FILE *fp = fopen("debug.txt", "wb");
     unsigned long long ran = 0;
+    unsigned short oldoldoldpc = 0xffff;
+    unsigned short oldoldpc = 0xffff;
+    unsigned short oldpc = 0xffff;
     for(;;){
-        printf("Bytes %02hhx %02hhx %02hhx %02hhx at 0x%04hx after %llu run\n",
-            ram[cpu->pc],
-            ram[cpu->pc+1],
-            ram[cpu->pc+2],
-            ram[cpu->pc+3],
-            cpu->pc,
-            ran++
-        );
+        ran++;
+
+        // printf("Bytes %02hhx %02hhx %02hhx %02hhx at 0x%04hx after %llu run\n",
+        //     ram[cpu->pc],
+        //     ram[cpu->pc+1],
+        //     ram[cpu->pc+2],
+        //     ram[cpu->pc+3],
+        //     cpu->pc,
+        //     ran++
+        // );
+
         fprintf(fp, "Bytes %02hhx %02hhx %02hhx %02hhx at 0x%04hx after %llu run...af: %04hx, sp: %04hx, hl: %04hx, de: %04hx\n",
             ram[cpu->pc],
             ram[cpu->pc+1],
@@ -232,8 +280,11 @@ static void do_emulation(struct cpu *cpu, unsigned char *restrict ram){
             cpu->de
         );
 
-        unsigned char opcode = ram[cpu->pc];
-        unsigned short oldpc = cpu->pc++; // increment instruction pointer
+        oldoldoldpc = oldoldpc;
+        oldoldpc = oldpc;
+        oldpc = cpu->pc;
+        unsigned char opcode = ram[cpu->pc++];
+
         unsigned char byte1;
         unsigned char byte2;
         unsigned char tmp_uchar;
@@ -268,10 +319,8 @@ static void do_emulation(struct cpu *cpu, unsigned char *restrict ram){
                 break;
             case 0x42: // sbc hl,bc
                 // Could be bug here, one of the next 4 lines is probably correct, don't know which
-                //cpu->hl = add16(cpu, cpu->hl, ~cpu->bc, cpu->f_c);
-                //cpu->hl = add16(cpu, cpu->hl, ~cpu->bc, !cpu->f_c);
-                //cpu->hl = add16(cpu, cpu->hl, ~cpu->bc, 2+~cpu->f_c);
-                cpu->hl = add16(cpu, cpu->hl, ~(cpu->bc + cpu->f_c), 1);
+                cpu->hl = add16(cpu, cpu->hl, ~cpu->bc, 1);
+                cpu->hl = add16(cpu, cpu->hl, ~cpu->f_c, 1);
                 cpu->f_n = 1;
                 break;
             case 0x57: // some instruction I can skip doing
@@ -284,10 +333,8 @@ static void do_emulation(struct cpu *cpu, unsigned char *restrict ram){
                 break;
             case 0x52: // sbc hl,de
                 // Could be bug here, one of the next 4 lines is probably correct, don't know which
-                //cpu->hl = add16(cpu, cpu->hl, ~cpu->de, cpu->f_c);
-                //cpu->hl = add16(cpu, cpu->hl, ~cpu->de, !cpu->f_c);
-                //cpu->hl = add16(cpu, cpu->hl, ~cpu->de, 2+~cpu->f_c);
-                cpu->hl = add16(cpu, cpu->hl, ~(cpu->de + cpu->f_c), 1);
+                cpu->hl = add16(cpu, cpu->hl, ~cpu->de, 1);
+                cpu->hl = add16(cpu, cpu->hl, ~cpu->f_c, 1);
                 cpu->f_n = 1;
                 break;
             case 0x5b: // ld de,(**)
@@ -383,6 +430,12 @@ static void do_emulation(struct cpu *cpu, unsigned char *restrict ram){
                 break;
             case 0xe1: // pop ix
                 cpu->ix = pop_16(cpu, ram);
+                break;
+            case 0x6e: // ld l,(ix+*)
+                cpu->l = ram[cpu->ix + (signed char)ram[cpu->pc++]];
+                break;
+            case 0x66: // ld h,(ix+*)
+                cpu->h = ram[cpu->ix + (signed char)ram[cpu->pc++]];
                 break;
             default:
                 goto fail;
@@ -788,8 +841,40 @@ static void do_emulation(struct cpu *cpu, unsigned char *restrict ram){
             cpu->e = add8(cpu, cpu->e, 1, 0);
             cpu->f_c = byte2;
             break;
+        case 0x1d: // dec e
+            byte2 = cpu->f_c;
+            cpu->e = add8(cpu, cpu->e, (unsigned char)~1, 1);
+            cpu->f_c = byte2;
+            break;
+        case 0x78: // ld a,b
+            cpu->a = cpu->b;
+            break;
+        case 0xb1: // or c
+            or_8(cpu, cpu->c);
+            break;
+        case 0x57: // ld d,a
+            cpu->d = cpu->a;
+            break;
+        case 0x8e: // adc a,(hl)
+            cpu->a = add8(cpu, cpu->a, load_16(cpu, ram, cpu->hl), cpu->f_c);
+            cpu->f_n = 0;
+            break;
+        case 0x04: // inc b
+            byte2 = cpu->f_c;
+            cpu->b = add8(cpu, cpu->b, 1, 0);
+            cpu->f_c = byte2;
+            break;
         default:
 fail:
+            printf("Ran at %04hx %04hx %04hx\n",oldoldoldpc,oldoldpc,oldpc);
+            printf("Bytes %02hhx %02hhx %02hhx %02hhx at 0x%04hx after %llu run\n",
+                ram[cpu->pc],
+                ram[cpu->pc+1],
+                ram[cpu->pc+2],
+                ram[cpu->pc+3],
+                cpu->pc,
+                ran
+            );
             printf("Unknown byte %02hhx at 0x%04hx\n", opcode, oldpc);
             exit(1);
             break;
