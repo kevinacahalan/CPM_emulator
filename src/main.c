@@ -70,7 +70,7 @@ static unsigned char parity(unsigned char p){
     return p;
 }
 
-static unsigned add8(struct cpu *cpu, unsigned x, unsigned y, unsigned carry_in){
+static unsigned alu_8_add(struct cpu *cpu, unsigned x, unsigned y, unsigned carry_in){
 
     uint64_t hsum = (x & 0xf) + (y & 0xf) + (carry_in & 1);
     int hcarry = hsum >> 4;
@@ -113,6 +113,41 @@ static unsigned add8(struct cpu *cpu, unsigned x, unsigned y, unsigned carry_in)
     return result;
 }
 
+static unsigned add_8(struct cpu *cpu, unsigned x, unsigned y){
+    return alu_8_add(cpu, x, y, 0);
+}
+
+static unsigned sub_8(struct cpu *cpu, unsigned x, unsigned y){
+    return alu_8_add(cpu, x, ~y, 1);
+}
+
+static void inc_8(struct cpu *cpu, unsigned char *p){
+    unsigned char c = cpu->f_c;
+    *p = alu_8_add(cpu, *p, 1, 0);
+    cpu->f_c = c;
+}
+
+static void dec_8(struct cpu *cpu, unsigned char *p){
+    unsigned char c = cpu->f_c;
+    *p = alu_8_add(cpu, *p, (unsigned char)~1, 1);
+    cpu->f_c = c;
+}
+
+static void cp_8(struct cpu *cpu, unsigned char b){
+    alu_8_add(cpu, cpu->a, ~b, 1);
+    cpu->f_n = 1;
+}
+
+static void neg_8(struct cpu *cpu, unsigned char *byte1){
+    *byte1 = alu_8_add(cpu, 0, ~*byte1, 1);
+    cpu->f_n = 1;
+}
+
+static void adc_8(struct cpu *cpu, unsigned char *pbyte1, unsigned char byte2){
+    *pbyte1 = alu_8_add(cpu, *pbyte1, byte2, cpu->f_c);
+    cpu->f_n = 0;
+    //adc_8(cpu, &cpu->a, ram[cpu->hl]);
+}
 
 static unsigned add16(struct cpu *cpu, unsigned x, unsigned y, unsigned carry_in){
     uint64_t hsum = (x & 0xfff) + (y & 0xfff) + carry_in;
@@ -156,6 +191,13 @@ static unsigned add16(struct cpu *cpu, unsigned x, unsigned y, unsigned carry_in
 
 
     return result;
+}
+
+static void sbc_16(struct cpu *cpu, unsigned short *pshort1, unsigned short *pshort2){
+    // Could be bug here, one of the next 4 lines is probably correct, don't know which
+    *pshort1 = add16(cpu, *pshort1, ~*pshort2, 1);
+    *pshort1 = add16(cpu, *pshort1, ~cpu->f_c, 1);
+    cpu->f_n = 1;
 }
 
 static void or_8(struct cpu *cpu, unsigned char val){
@@ -287,7 +329,7 @@ static void do_emulation(struct cpu *cpu, unsigned char *restrict ram){
 
         unsigned char byte1;
         unsigned char byte2;
-        unsigned char tmp_uchar;
+        unsigned char tmp_uchar; (void)tmp_uchar;
         unsigned short tmp_ushort;
         unsigned char *ptr_u8;
 
@@ -315,13 +357,9 @@ static void do_emulation(struct cpu *cpu, unsigned char *restrict ram){
                 //basically a memcpy
                 do ram[cpu->de++] = ram[cpu->hl++];
                 while ((unsigned short)--cpu->bc);
-                
                 break;
             case 0x42: // sbc hl,bc
-                // Could be bug here, one of the next 4 lines is probably correct, don't know which
-                cpu->hl = add16(cpu, cpu->hl, ~cpu->bc, 1);
-                cpu->hl = add16(cpu, cpu->hl, ~cpu->f_c, 1);
-                cpu->f_n = 1;
+                sbc_16(cpu, &cpu->hl, &cpu->de);
                 break;
             case 0x57: // some instruction I can skip doing
                 break;
@@ -332,10 +370,7 @@ static void do_emulation(struct cpu *cpu, unsigned char *restrict ram){
                 store_16(cpu, ram, cpu->de, imm_16(cpu, ram));
                 break;
             case 0x52: // sbc hl,de
-                // Could be bug here, one of the next 4 lines is probably correct, don't know which
-                cpu->hl = add16(cpu, cpu->hl, ~cpu->de, 1);
-                cpu->hl = add16(cpu, cpu->hl, ~cpu->f_c, 1);
-                cpu->f_n = 1;
+                sbc_16(cpu, &cpu->hl, &cpu->de);
                 break;
             case 0x5b: // ld de,(**)
                 cpu->de = load_16(cpu, ram, imm_16(cpu, ram));
@@ -344,8 +379,9 @@ static void do_emulation(struct cpu *cpu, unsigned char *restrict ram){
                 cpu->bc = load_16(cpu, ram, imm_16(cpu, ram));
                 break;
             case 0x44: // neg
-                cpu->a = add8(cpu, 0, ~cpu->a, 1);
-                cpu->f_n = 1;
+                // cpu->a = add8(cpu, 0, ~cpu->a, 1);
+                // cpu->f_n = 1;
+                neg_8(cpu, &cpu->a);
                 break;
             default:
                 goto fail;
@@ -408,8 +444,7 @@ static void do_emulation(struct cpu *cpu, unsigned char *restrict ram){
         case 0xfe: // cp *     probably should be something like `cp a,*` or `cp *,a`
             // page 164 in z80 cpu manual
             byte1 = ram[cpu->pc++];
-            add8(cpu, cpu->a, ~byte1, 1);
-            cpu->f_n = 1;
+            cp_8(cpu, byte1);
             break;
         case 0xca: // jp z,**
             tmp_ushort = imm_16(cpu, ram);
@@ -459,8 +494,7 @@ static void do_emulation(struct cpu *cpu, unsigned char *restrict ram){
             cpu->a = ram[imm_16(cpu, ram)];
             break;
         case 0xbc: // cp h
-            add8(cpu, cpu->a, ~cpu->h, 1);
-            cpu->f_n = 1;
+            cp_8(cpu, cpu->h);
             break;
         case 0x30: // jr nc,*
             byte1 = ram[cpu->pc++];
@@ -471,9 +505,10 @@ static void do_emulation(struct cpu *cpu, unsigned char *restrict ram){
             cpu->b = ram[cpu->hl];
             break;
         case 0x24: // inc h
-            byte2 = cpu->f_c;
-            cpu->h = add8(cpu, cpu->h, 1, 0);
-            cpu->f_c = byte2;
+            // byte2 = cpu->f_c;
+            // cpu->h = add8(cpu, cpu->h, 1, 0);
+            // cpu->f_c = byte2;
+            inc_8(cpu, &cpu->h);
             break;
         case 0x66: // ld h,(hl)
             cpu->h = ram[cpu->hl];
@@ -639,7 +674,7 @@ static void do_emulation(struct cpu *cpu, unsigned char *restrict ram){
             cpu->f_s = cpu->a >> 7; // take sign bit and put it in f_s
             break;
         case 0x87: // add a,a
-            cpu->a = add8(cpu, cpu->a, cpu->a, 0);
+            cpu->a = add_8(cpu, cpu->a, cpu->a);
             break;
         case 0xc2: // jp nz,**
             tmp_ushort = imm_16(cpu, ram);
@@ -768,9 +803,10 @@ static void do_emulation(struct cpu *cpu, unsigned char *restrict ram){
             }
             break;
         case 0x3d: // dec a
-            byte2 = cpu->f_c;
-            cpu->a = add8(cpu, cpu->a, (unsigned char)~1, 1);
-            cpu->f_c = byte2;
+            //byte2 = cpu->f_c;
+            //cpu->a = add8(cpu, cpu->a, (unsigned char)~1, 1);
+            //cpu->f_c = byte2;
+            dec_8(cpu, &cpu->a);
             break;
         case 0x20: // jr nz,*
             byte1 = ram[cpu->pc++];
@@ -837,14 +873,10 @@ static void do_emulation(struct cpu *cpu, unsigned char *restrict ram){
             cpu->d = ram[cpu->pc++];
             break;
         case 0x1c: // inc e
-            byte2 = cpu->f_c;
-            cpu->e = add8(cpu, cpu->e, 1, 0);
-            cpu->f_c = byte2;
+            inc_8(cpu, &cpu->e);
             break;
         case 0x1d: // dec e
-            byte2 = cpu->f_c;
-            cpu->e = add8(cpu, cpu->e, (unsigned char)~1, 1);
-            cpu->f_c = byte2;
+            dec_8(cpu, &cpu->e);
             break;
         case 0x78: // ld a,b
             cpu->a = cpu->b;
@@ -856,13 +888,15 @@ static void do_emulation(struct cpu *cpu, unsigned char *restrict ram){
             cpu->d = cpu->a;
             break;
         case 0x8e: // adc a,(hl)
-            cpu->a = add8(cpu, cpu->a, load_16(cpu, ram, cpu->hl), cpu->f_c);
-            cpu->f_n = 0;
+            // cpu->a = add8(cpu, cpu->a, load_16(cpu, ram, cpu->hl), cpu->f_c);
+            // cpu->f_n = 0;
+            adc_8(cpu, &cpu->a, ram[cpu->hl]);
             break;
         case 0x04: // inc b
-            byte2 = cpu->f_c;
-            cpu->b = add8(cpu, cpu->b, 1, 0);
-            cpu->f_c = byte2;
+            // byte2 = cpu->f_c;
+            // cpu->b = add8(cpu, cpu->b, 1, 0);
+            // cpu->f_c = byte2;
+            inc_8(cpu, &cpu->b);
             break;
         default:
 fail:
