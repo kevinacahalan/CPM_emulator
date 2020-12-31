@@ -115,21 +115,25 @@ static unsigned alu_8_add(struct cpu *cpu, unsigned x, unsigned y, unsigned carr
 
 static unsigned add_8(struct cpu *cpu, unsigned x, unsigned y){
     return alu_8_add(cpu, x, y, 0);
+    cpu->f_n = 0;
 }
 
 static unsigned sub_8(struct cpu *cpu, unsigned x, unsigned y){
     return alu_8_add(cpu, x, ~y, 1);
+    cpu->f_n = 1;
 }
 
 static void inc_8(struct cpu *cpu, unsigned char *p){
     unsigned char c = cpu->f_c;
     *p = alu_8_add(cpu, *p, 1, 0);
+    cpu->f_n = 0;
     cpu->f_c = c;
 }
 
 static void dec_8(struct cpu *cpu, unsigned char *p){
     unsigned char c = cpu->f_c;
     *p = alu_8_add(cpu, *p, (unsigned char)~1, 1);
+    cpu->f_n = 1;
     cpu->f_c = c;
 }
 
