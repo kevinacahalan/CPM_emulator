@@ -138,8 +138,38 @@ static void dec_8(struct cpu *cpu, unsigned char *p){
 }
 
 static void cp_8(struct cpu *cpu, unsigned char b){
-    alu_8_add(cpu, cpu->a, ~b, 1);
-    cpu->f_n = 1;
+//    alu_8_add(cpu, cpu->a, ~b, 1);
+//    cpu->f_n = 1;
+
+    unsigned long rflags = cpu->f_pv<<11 | (cpu->f & 0xd1);
+    unsigned long left = b;
+    unsigned long right = cpu->a;
+
+    __asm__ __volatile__ (
+        "pushfq\n\t"
+
+        "pushfq\n\t"
+        "andw $0xf72a,0(%%rsp)\n\t"
+        "orw %w0,0(%%rsp)\n\t"
+        "popfq\n\t"
+
+        "cmpb %b2, %b1\n\t"
+
+        "pushfq\n\t"
+        "popq %0\n\t"
+
+        "popfq\n\t"
+
+        :"+&q"(rflags),"+&q"(right)
+        :"q"(left)
+    );
+
+    cpu->f_c  = (rflags>>0)&1;
+    cpu->f_n  = 1;
+    cpu->f_pv = (rflags>>11)&1;
+    cpu->f_h  = (rflags>>4)&1;
+    cpu->f_z  = (rflags>>6)&1;
+    cpu->f_s  = (rflags>>7)&1;
 }
 
 static void neg_8(struct cpu *cpu, unsigned char *byte1){
@@ -199,9 +229,42 @@ static unsigned add16(struct cpu *cpu, unsigned x, unsigned y, unsigned carry_in
 
 static void sbc_16(struct cpu *cpu, unsigned short *pshort1, unsigned short *pshort2){
     // Could be bug here, one of the next 4 lines is probably correct, don't know which
-    *pshort1 = add16(cpu, *pshort1, ~*pshort2, 1);
-    *pshort1 = add16(cpu, *pshort1, ~cpu->f_c, 1);
-    cpu->f_n = 1;
+//    *pshort1 = add16(cpu, *pshort1, ~*pshort2, 1);
+  //  *pshort1 = add16(cpu, *pshort1, ~cpu->f_c, 1);
+    //cpu->f_n = 1;
+
+
+    unsigned long rflags = cpu->f_pv<<11 | (cpu->f & 0xd1);
+    unsigned long left = *pshort2;
+    unsigned long right = *pshort1;
+
+    __asm__ __volatile__ (
+        "pushfq\n\t"
+
+        "pushfq\n\t"
+        "andw $0xf72a,0(%%rsp)\n\t"
+        "orw %w0,0(%%rsp)\n\t"
+        "popfq\n\t"
+
+        "sbbw %w2, %w1\n\t"
+
+        "pushfq\n\t"
+        "popq %0\n\t"
+
+        "popfq\n\t"
+
+        :"+&q"(rflags),"+&q"(right)
+        :"q"(left)
+    );
+
+    *pshort1 = right;
+
+    cpu->f_c  = (rflags>>0)&1;
+    cpu->f_n  = 1;
+    cpu->f_pv = (rflags>>11)&1;
+    cpu->f_h  = (rflags>>4)&1;
+    cpu->f_z  = (rflags>>6)&1;
+    cpu->f_s  = (rflags>>7)&1;
 }
 
 static void or_8(struct cpu *cpu, unsigned char val){
@@ -290,6 +353,10 @@ static unsigned short bdos(
     case 0x23: // get file size or something
         return 0xff;
         break;
+    case 0x00: // System Reset, exit
+        puts("Good Bye");
+        exit(0);
+        break;
     default:
         printf("Function: %02hhx, parameter: %04hx\n", function, parameter);
         exit(2);
@@ -314,16 +381,33 @@ static void do_emulation(struct cpu *cpu, unsigned char *restrict ram){
         //     ran++
         // );
 
-        fprintf(fp, "Bytes %02hhx %02hhx %02hhx %02hhx at 0x%04hx after %llu run...af: %04hx, sp: %04hx, hl: %04hx, de: %04hx\n",
+        fprintf(fp, "Bytes %02hhx %02hhx %02hhx %02hhx pc:%04hx af:%04hx sp:%04hx hl:%04hx de:%04hx bc:%04hx ix:%04hx iy:%04hx\n",
             ram[cpu->pc],
             ram[cpu->pc+1],
             ram[cpu->pc+2],
             ram[cpu->pc+3],
-            cpu->pc,ran, 
+            cpu->pc,
+            cpu->af&0xffd7, // hide reserved bits
+            cpu->sp, 
+            cpu->hl, 
+            cpu->de,
+            cpu->bc, 
+            cpu->ix, 
+            cpu->iy
+        );
+        fprintf(stdout, "Bytes %02hhx %02hhx %02hhx %02hhx pc:%04hx af:%04hx sp:%04hx hl:%04hx de:%04hx bc:%04hx ix:%04hx iy:%04hx\n",
+            ram[cpu->pc],
+            ram[cpu->pc+1],
+            ram[cpu->pc+2],
+            ram[cpu->pc+3],
+            cpu->pc,
             cpu->af, 
             cpu->sp, 
             cpu->hl, 
-            cpu->de
+            cpu->de,
+            cpu->bc, 
+            cpu->ix, 
+            cpu->iy
         );
 
         oldoldoldpc = oldoldpc;
@@ -363,7 +447,7 @@ static void do_emulation(struct cpu *cpu, unsigned char *restrict ram){
                 while ((unsigned short)--cpu->bc);
                 break;
             case 0x42: // sbc hl,bc
-                sbc_16(cpu, &cpu->hl, &cpu->de);
+                sbc_16(cpu, &cpu->hl, &cpu->bc);
                 break;
             case 0x57: // some instruction I can skip doing
                 break;
@@ -570,8 +654,8 @@ static void do_emulation(struct cpu *cpu, unsigned char *restrict ram){
 
             break;
         case 0xf3: // di
-            printf("Interrupts off, di instruction not written\n");
-            fprintf(fp, "Interrupts off, di instruction not written\n");
+            // printf("Interrupts off, di instruction not written\n");
+            // fprintf(fp, "Interrupts off, di instruction not written\n");
             break;
         case 0x22: // ld (**), hl
             store_16(cpu, ram, cpu->hl, imm_16(cpu, ram));
@@ -901,6 +985,47 @@ static void do_emulation(struct cpu *cpu, unsigned char *restrict ram){
             // cpu->b = add8(cpu, cpu->b, 1, 0);
             // cpu->f_c = byte2;
             inc_8(cpu, &cpu->b);
+            break;
+        case 0xd2: // jp nc,**
+            tmp_ushort = imm_16(cpu, ram);
+            if (!cpu->f_c)
+                cpu->pc = tmp_ushort;
+            break;
+        case 0x72: // ld(hl),d
+            ram[cpu->hl] = cpu->d;
+            break;
+        case 0x1f: // rra
+            tmp_uchar = cpu->f_c;
+            cpu->f_c = cpu->a;
+            cpu->a = cpu->a >> 1 | tmp_uchar << 7;
+            cpu->f_n = 0;
+            cpu->f_h = 0;
+            break;
+        case 0xdc: // call c,**
+            tmp_ushort = imm_16(cpu, ram);
+            if(cpu->f_c){
+                push_16(cpu, ram, cpu->pc);
+                cpu->pc = tmp_ushort;
+
+                if(cpu->pc == 5){
+                    cpu->hl = bdos(ram, cpu->c, cpu->de);
+                    cpu->a = cpu->l;
+                    cpu->b = cpu->h;
+                    cpu->pc = pop_16(cpu, ram); // Undo the push_16 above
+                }
+            }
+            break;
+        case 0xbd: // cp l
+            cp_8(cpu, cpu->l);
+            break;
+        case 0x2f: // cpl
+            cpu->a = ~cpu->a;
+            cpu->f_n = 1;
+            cpu->f_h = 1;
+            break;
+        case 0xd6: // sub *
+            byte1 = ram[cpu->pc++];
+            cpu->a = sub_8(cpu, cpu->a, byte1);
             break;
         default:
 fail:
