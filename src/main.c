@@ -118,9 +118,41 @@ static unsigned add_8(struct cpu *cpu, unsigned x, unsigned y){
     cpu->f_n = 0;
 }
 
-static unsigned sub_8(struct cpu *cpu, unsigned x, unsigned y){
-    return alu_8_add(cpu, x, ~y, 1);
-    cpu->f_n = 1;
+static unsigned sub_8(struct cpu *cpu, unsigned x){
+    // return alu_8_add(cpu, x, ~y, 1);
+    // cpu->f_n = 1;
+
+    unsigned long rflags = cpu->f_pv<<11 | (cpu->f & 0xd1);
+    unsigned long src = x;
+    unsigned long src_dst = cpu->a;
+
+    __asm__ __volatile__ (
+        "pushfq\n\t"
+
+        "pushfq\n\t"
+        "andw $0xf72a,0(%%rsp)\n\t"
+        "orw %w0,0(%%rsp)\n\t"
+        "popfq\n\t"
+
+        "subb %b2, %b1\n\t"
+
+        "pushfq\n\t"
+        "popq %0\n\t"
+
+        "popfq\n\t"
+
+        :"+&q"(rflags),"+&q"(src_dst)
+        :"q"(src)
+    );
+
+    cpu->f_c  = (rflags>>0)&1;
+    cpu->f_n  = 1;
+    cpu->f_pv = (rflags>>11)&1;
+    cpu->f_h  = (rflags>>4)&1;
+    cpu->f_z  = (rflags>>6)&1;
+    cpu->f_s  = (rflags>>7)&1;
+
+    return src_dst;
 }
 
 static void inc_8(struct cpu *cpu, unsigned char *p){
@@ -142,8 +174,8 @@ static void cp_8(struct cpu *cpu, unsigned char b){
 //    cpu->f_n = 1;
 
     unsigned long rflags = cpu->f_pv<<11 | (cpu->f & 0xd1);
-    unsigned long left = b;
-    unsigned long right = cpu->a;
+    unsigned long src = b;
+    unsigned long src_dst = cpu->a;
 
     __asm__ __volatile__ (
         "pushfq\n\t"
@@ -160,8 +192,8 @@ static void cp_8(struct cpu *cpu, unsigned char b){
 
         "popfq\n\t"
 
-        :"+&q"(rflags),"+&q"(right)
-        :"q"(left)
+        :"+&q"(rflags),"+&q"(src_dst)
+        :"q"(src)
     );
 
     cpu->f_c  = (rflags>>0)&1;
@@ -173,14 +205,82 @@ static void cp_8(struct cpu *cpu, unsigned char b){
 }
 
 static void neg_8(struct cpu *cpu, unsigned char *byte1){
-    *byte1 = alu_8_add(cpu, 0, ~*byte1, 1);
-    cpu->f_n = 1;
+    // *byte1 = alu_8_add(cpu, 0, ~*byte1, 1);
+    // cpu->f_n = 1;
+
+    unsigned long rflags = cpu->f_pv<<11 | (cpu->f & 0xd1);
+    unsigned long src_dst = *byte1;
+
+    __asm__ __volatile__ (
+        "pushfq\n\t"
+
+        "pushfq\n\t"
+        "andw $0xf72a,0(%%rsp)\n\t"
+        "orw %w0,0(%%rsp)\n\t"
+        "popfq\n\t"
+
+        "negb %b1\n\t"
+
+        "pushfq\n\t"
+        "popq %0\n\t"
+
+        "popfq\n\t"
+
+        :"+&q"(rflags),"+&q"(src_dst)
+    );
+
+    *byte1 = src_dst;
+
+    cpu->f_c  = (rflags>>0)&1;
+    cpu->f_n  = 1;
+    cpu->f_pv = (rflags>>11)&1;
+    cpu->f_h  = (rflags>>4)&1;
+    cpu->f_z  = (rflags>>6)&1;
+    cpu->f_s  = (rflags>>7)&1;
 }
 
-static void adc_8(struct cpu *cpu, unsigned char *pbyte1, unsigned char byte2){
-    *pbyte1 = alu_8_add(cpu, *pbyte1, byte2, cpu->f_c);
+// should change to be consistent with sbc_8
+static void adc_8(struct cpu *cpu, unsigned char *src_dst_ptr, unsigned char src){
+    *src_dst_ptr = alu_8_add(cpu, *src_dst_ptr, src, cpu->f_c);
     cpu->f_n = 0;
     //adc_8(cpu, &cpu->a, ram[cpu->hl]);
+}
+
+static unsigned sbc_8(struct cpu *cpu, unsigned x){
+    // return alu_8_add(cpu, x, ~y, 1);
+    // cpu->f_n = 1;
+
+    unsigned long rflags = cpu->f_pv<<11 | (cpu->f & 0xd1);
+    unsigned long src = x;
+    unsigned long src_dst = cpu->a;
+
+    __asm__ __volatile__ (
+        "pushfq\n\t"
+
+        "pushfq\n\t"
+        "andw $0xf72a,0(%%rsp)\n\t"
+        "orw %w0,0(%%rsp)\n\t"
+        "popfq\n\t"
+
+        "sbbb %b2, %b1\n\t"
+
+        "pushfq\n\t"
+        "popq %0\n\t"
+
+        "popfq\n\t"
+
+        :"+&q"(rflags),"+&q"(src_dst)
+        :"q"(src)
+    );
+
+    cpu->f_c  = (rflags>>0)&1;
+    cpu->f_n  = 1;
+    cpu->f_pv = (rflags>>11)&1;
+    cpu->f_h  = (rflags>>4)&1;
+    cpu->f_z  = (rflags>>6)&1;
+    cpu->f_s  = (rflags>>7)&1;
+
+    return src_dst;
 }
 
 static unsigned add16(struct cpu *cpu, unsigned x, unsigned y, unsigned carry_in){
@@ -235,8 +335,8 @@ static void sbc_16(struct cpu *cpu, unsigned short *pshort1, unsigned short *psh
 
 
     unsigned long rflags = cpu->f_pv<<11 | (cpu->f & 0xd1);
-    unsigned long left = *pshort2;
-    unsigned long right = *pshort1;
+    unsigned long src = *pshort2;
+    unsigned long src_dst = *pshort1;
 
     __asm__ __volatile__ (
         "pushfq\n\t"
@@ -253,11 +353,11 @@ static void sbc_16(struct cpu *cpu, unsigned short *pshort1, unsigned short *psh
 
         "popfq\n\t"
 
-        :"+&q"(rflags),"+&q"(right)
-        :"q"(left)
+        :"+&q"(rflags),"+&q"(src_dst)
+        :"q"(src)
     );
 
-    *pshort1 = right;
+    *pshort1 = src_dst;
 
     cpu->f_c  = (rflags>>0)&1;
     cpu->f_n  = 1;
@@ -273,6 +373,16 @@ static void or_8(struct cpu *cpu, unsigned char val){
     cpu->f_n = 0;
     cpu->f_pv = parity(cpu->a);
     cpu->f_h = 0;
+    cpu->f_z = !cpu->a;
+    cpu->f_s = cpu->a >> 7; // take sign bit and put it in f_s
+}
+
+static void and_8(struct cpu *cpu, unsigned char val){
+    cpu->a &= val;
+    cpu->f_c = 0;
+    cpu->f_n = 0;
+    cpu->f_pv = parity(cpu->a);
+    cpu->f_h = 1;
     cpu->f_z = !cpu->a;
     cpu->f_s = cpu->a >> 7; // take sign bit and put it in f_s
 }
@@ -356,6 +466,9 @@ static unsigned short bdos(
     case 0x00: // System Reset, exit
         puts("Good Bye");
         exit(0);
+    case 0x06: // Direct Console I/O
+        putchar(parameter & 0xff);
+        fflush(stdout);
         break;
     default:
         printf("Function: %02hhx, parameter: %04hx\n", function, parameter);
@@ -395,20 +508,20 @@ static void do_emulation(struct cpu *cpu, unsigned char *restrict ram){
             cpu->ix, 
             cpu->iy
         );
-        fprintf(stdout, "Bytes %02hhx %02hhx %02hhx %02hhx pc:%04hx af:%04hx sp:%04hx hl:%04hx de:%04hx bc:%04hx ix:%04hx iy:%04hx\n",
-            ram[cpu->pc],
-            ram[cpu->pc+1],
-            ram[cpu->pc+2],
-            ram[cpu->pc+3],
-            cpu->pc,
-            cpu->af, 
-            cpu->sp, 
-            cpu->hl, 
-            cpu->de,
-            cpu->bc, 
-            cpu->ix, 
-            cpu->iy
-        );
+        // fprintf(stdout, "Bytes %02hhx %02hhx %02hhx %02hhx pc:%04hx af:%04hx sp:%04hx hl:%04hx de:%04hx bc:%04hx ix:%04hx iy:%04hx\n",
+        //     ram[cpu->pc],
+        //     ram[cpu->pc+1],
+        //     ram[cpu->pc+2],
+        //     ram[cpu->pc+3],
+        //     cpu->pc,
+        //     cpu->af, 
+        //     cpu->sp, 
+        //     cpu->hl, 
+        //     cpu->de,
+        //     cpu->bc, 
+        //     cpu->ix, 
+        //     cpu->iy
+        // );
 
         oldoldoldpc = oldoldpc;
         oldoldpc = oldpc;
@@ -471,7 +584,12 @@ static void do_emulation(struct cpu *cpu, unsigned char *restrict ram){
                 // cpu->f_n = 1;
                 neg_8(cpu, &cpu->a);
                 break;
+            case 0x6a: // adc hl,hl
+                cpu->hl = add16(cpu, cpu->hl, cpu->hl, cpu->f_c);
+                cpu->f_n = 0;
+                break;
             default:
+                puts("0xed means Extended Instruction");
                 goto fail;
             }
             break;
@@ -519,7 +637,11 @@ static void do_emulation(struct cpu *cpu, unsigned char *restrict ram){
             case 0xe1: // pop iy
                 cpu->iy = pop_16(cpu, ram);
                 break;
+            case 0x2a: // ld iy,(**)
+                cpu->iy = load_16(cpu, ram, imm_16(cpu, ram));
+                break;
             default:
+                puts("0xfd is an IY instruction");
                 goto fail;
             }
             break;
@@ -560,7 +682,17 @@ static void do_emulation(struct cpu *cpu, unsigned char *restrict ram){
             case 0x66: // ld h,(ix+*)
                 cpu->h = ram[cpu->ix + (signed char)ram[cpu->pc++]];
                 break;
+            case 0xf9: // ld sp,ix
+                cpu->sp = cpu->ix;
+                break;
+            case 0x22: // ld (**), ix
+                store_16(cpu, ram, cpu->ix, imm_16(cpu, ram));
+                break;
+            case 0x2a: // ld ix,(**)
+                cpu->ix = load_16(cpu, ram, imm_16(cpu, ram));
+                break;
             default:
+                puts("0xdd means an IX instruction");
                 goto fail;
             }
             break;
@@ -753,13 +885,7 @@ static void do_emulation(struct cpu *cpu, unsigned char *restrict ram){
             break;
         case 0xe6: // and *
             byte1 = ram[cpu->pc++];
-            cpu->a &= byte1;
-            cpu->f_c = 0;
-            cpu->f_n = 0;
-            cpu->f_pv = parity(cpu->a);
-            cpu->f_h = 1;
-            cpu->f_z = !cpu->a;
-            cpu->f_s = cpu->a >> 7; // take sign bit and put it in f_s
+            and_8(cpu, byte1);
             break;
         case 0x87: // add a,a
             cpu->a = add_8(cpu, cpu->a, cpu->a);
@@ -1025,12 +1151,77 @@ static void do_emulation(struct cpu *cpu, unsigned char *restrict ram){
             break;
         case 0xd6: // sub *
             byte1 = ram[cpu->pc++];
-            cpu->a = sub_8(cpu, cpu->a, byte1);
+            cpu->a = sub_8(cpu, byte1);
+            break;
+        case 0x29: // add hl,hl
+            cpu->hl = add16(cpu, cpu->hl, cpu->hl, 0);
+            cpu->f_n = 0;
+            break;
+        case 0x3c: // inc a
+            inc_8(cpu, &cpu->a);
+            break;
+        case 0x8f: // adc a,a
+            adc_8(cpu, &cpu->a, cpu->a);
+            break;
+        case 0x14: // inc d
+            inc_8(cpu, &cpu->d);
+            break;
+        case 0x2c: // inc l
+            inc_8(cpu, &cpu->l);
+            break;
+        case 0xb0: // or b
+            or_8(cpu, cpu->b);
+            break;
+        case 0xde: // sbc a,*
+            byte1 = ram[cpu->pc++];
+            sbc_8(cpu, byte1);
+            break;
+        case 0xa1: // and c
+            and_8(cpu, cpu->c);
+            break;
+        case 0xa0: // and b
+            and_8(cpu, cpu->b);
+            break;
+        case 0x0a: // ld a,(bc)
+            cpu->a = ram[cpu->bc];
+            break;
+        case 0x0c: // inc c
+            inc_8(cpu, &cpu->c);
+            break;
+        case 0x0d: // dec c
+            dec_8(cpu, &cpu->c);
+            break;
+        case 0xbe: // cp (hl)            was ment to be
+            cp_8(cpu, ram[cpu->hl]);
+            break;
+        case 0x05: // dec b
+            dec_8(cpu, &cpu->b);
+            break;
+        case 0x6b: // ld l,e
+            cpu->l = cpu->e;
+            break;
+        case 0x62: // ld h,d
+            cpu->h = cpu->d;
+            break;
+        case 0x10: // djnz *
+            byte1 = ram[cpu->pc++];
+            if(--cpu->b)
+                cpu->pc = (short)(signed char)byte1 + cpu->pc;
+            break;
+        case 0x79: // sub a
+            cpu->a = sub_8(cpu, cpu->a);
+            break;
+        case 0xc6: // add a,*
+            byte1 = ram[cpu->pc++];
+            cpu->a = add_8(cpu, byte1, cpu->a);
             break;
         default:
+            puts("plain top level instruction");
 fail:
             printf("Ran at %04hx %04hx %04hx\n",oldoldoldpc,oldoldpc,oldpc);
-            printf("Bytes %02hhx %02hhx %02hhx %02hhx at 0x%04hx after %llu run\n",
+            printf("Bytes %02hhx %02hhx %02hhx %02hhx %02hhx %02hhx at 0x%04hx after %llu run\n",
+                ram[cpu->pc-2],
+                ram[cpu->pc-1],
                 ram[cpu->pc],
                 ram[cpu->pc+1],
                 ram[cpu->pc+2],
