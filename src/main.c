@@ -75,7 +75,7 @@ static unsigned alu_8_add(struct cpu *cpu, unsigned x, unsigned y, unsigned carr
     uint64_t hsum = (x & 0xf) + (y & 0xf) + (carry_in & 1);
     int hcarry = hsum >> 4;
     uint64_t usum = (x & 0xff) + (y & 0xff) + (carry_in & 1);
-    int64_t ssum = (int64_t)(signed char)x + (int64_t)(signed char)y + (int64_t)(signed char)carry_in;
+    // int64_t ssum = (int64_t)(signed char)x + (int64_t)(signed char)y + (int64_t)(signed char)carry_in;
     int carry_out = usum != (uint8_t)usum;
     int overflow = ((usum ^ x) & (usum ^ y)) >> 7;
     
@@ -435,6 +435,7 @@ static unsigned short bdos(
     unsigned char function, 
     unsigned short parameter
 ){
+    unsigned char tmp_byte;
     switch (function){
     case 0x19: // return currently selected drive
         return 0; // drive A:
@@ -467,9 +468,16 @@ static unsigned short bdos(
         puts("Good Bye");
         exit(0);
     case 0x06: // Direct Console I/O
-        putchar(parameter & 0xff);
-        fflush(stdout);
-        break;
+        tmp_byte = parameter & 0xff;
+        if(tmp_byte == 0xff){
+            printf("\n\n\nTHEY WANT INPUT\n\n\n");
+            exit(2);
+            return 0x00; // no char ready
+        }else{
+            putchar(parameter & 0xff);
+            fflush(stdout);
+            return 0x00; // might be wrong
+        }
     default:
         printf("Function: %02hhx, parameter: %04hx\n", function, parameter);
         exit(2);
@@ -587,6 +595,10 @@ static void do_emulation(struct cpu *cpu, unsigned char *restrict ram){
             case 0x6a: // adc hl,hl
                 cpu->hl = add16(cpu, cpu->hl, cpu->hl, cpu->f_c);
                 cpu->f_n = 0;
+                break;
+            case 0xb8: // lddr
+                do ram[cpu->de--] = ram[cpu->hl--];
+                while ((unsigned short)--cpu->bc);
                 break;
             default:
                 puts("0xed means Extended Instruction");
@@ -1261,6 +1273,11 @@ int main(int argc, char const *argv[]) {
     ram[7] = 0xfe;
     cpu->af = 0x0000;
     cpu->sp = 0xfeed;
+        
+    // should put some fancy stuff here with a loop to deal with more then 1 guest arg
+    strcpy((char *)ram + 0x82, argv[2] ? argv[2] : "");
+    ram[0x81] = ' ';
+    ram[0x80] = strlen((char *)ram + 0x80);
 
     do_emulation(cpu, ram);
 
