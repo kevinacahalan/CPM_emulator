@@ -387,21 +387,34 @@ static void and_8(struct cpu *cpu, unsigned char val){
     cpu->f_s = cpu->a >> 7; // take sign bit and put it in f_s
 }
 
+static unsigned short writers[0x10000];
+static unsigned char mem_tracker[0x10000];
+
 
 static unsigned char load_8(struct cpu *restrict const cpu, const unsigned char *restrict const ram, unsigned short addr){
     (void)cpu; // I like handing cpu even though I am not using it
     unsigned char byte1 = ram[addr];
-
+    mem_tracker[addr] |= 0x01;
     return byte1;
 }
 
 static void store_8(struct cpu *restrict const cpu, unsigned char *restrict const ram, unsigned char val, unsigned short addr){
     (void)cpu; // I like handing cpu even though I am not using it
-    ram[addr] = val;                            // write low bits
+    ram[addr] = val; // write low bits
+
+    mem_tracker[addr] |= 0x02;
+    writers[addr] = cpu->pc;
 }
 
 static unsigned char imm_8(struct cpu *restrict const cpu, const unsigned char *restrict const ram){
-    unsigned char low = ram[cpu->pc++];
+    unsigned short addr = cpu->pc++;
+    unsigned char low = ram[addr];
+    mem_tracker[addr] |= 0x04;
+
+    if(mem_tracker[addr] != 0x04){
+        printf("Detected bad stuff, address %04hx last written by %04hx\n", addr, writers[addr]);
+        exit(44);
+    }
 
     return low;
 }
@@ -537,6 +550,7 @@ static void do_emulation(struct cpu *cpu, unsigned char *restrict ram){
             cpu->ix, 
             cpu->iy
         );
+
         // fprintf(stdout, "Bytes %02hhx %02hhx %02hhx %02hhx pc:%04hx af:%04hx sp:%04hx hl:%04hx de:%04hx bc:%04hx ix:%04hx iy:%04hx\n",
         //     ram[cpu->pc],
         //     ram[cpu->pc+1],
