@@ -2,6 +2,7 @@
 #include <stdlib.h>
 #include <stdint.h>
 #include <string.h>
+#include "portable.h"
 
 
 struct cpu{
@@ -164,7 +165,7 @@ static void inc_8(struct cpu *cpu, unsigned char *p){
 
 static void dec_8(struct cpu *cpu, unsigned char *p){
     unsigned char c = cpu->f_c;
-    *p = alu_8_add(cpu, *p, (unsigned char)~1, 1);
+    *p = alu_8_add(cpu, *p, (unsigned char)~1, 1); // litte scary
     cpu->f_n = 1;
     cpu->f_c = c;
 }
@@ -387,8 +388,8 @@ static void and_8(struct cpu *cpu, unsigned char val){
     cpu->f_s = cpu->a >> 7; // take sign bit and put it in f_s
 }
 
-static unsigned short writers[0x10000];
-static unsigned char mem_tracker[0x10000];
+static unsigned short *writers;
+static unsigned char *mem_tracker;
 
 
 static unsigned char load_8(struct cpu *restrict const cpu, const unsigned char *restrict const ram, unsigned short addr){
@@ -542,7 +543,7 @@ static void do_emulation(struct cpu *cpu, unsigned char *restrict ram){
             ram[cpu->pc+2],
             ram[cpu->pc+3],
             cpu->pc,
-            cpu->af&0xffd7, // hide reserved bits
+            cpu->af& 0xffd7 & 0xffef, // hide reserved bits and half carry
             cpu->sp, 
             cpu->hl, 
             cpu->de,
@@ -569,6 +570,12 @@ static void do_emulation(struct cpu *cpu, unsigned char *restrict ram){
         oldoldoldpc = oldoldpc;
         oldoldpc = oldpc;
         oldpc = cpu->pc;
+
+        if(cpu->pc < 0x0100 || cpu->pc > 30300){ // tmp debug code
+            puts("highly suspect PC value");
+            goto fail;
+        }
+
         unsigned char opcode = imm_8(cpu, ram);
 
         unsigned char byte1;
@@ -599,8 +606,14 @@ static void do_emulation(struct cpu *cpu, unsigned char *restrict ram){
                 break;
             case 0xb0: // ldir
                 //basically a memcpy
-                do store_8(cpu, ram, load_8(cpu, ram, cpu->hl++), cpu->de++);
-                while ((unsigned short)--cpu->bc);
+                //do store_8(cpu, ram, load_8(cpu, ram, cpu->hl++), cpu->de++);
+                //while ((unsigned short)--cpu->bc);
+                cpu->f_n = 0;
+                cpu->f_h = 0;
+                cpu->f_pv = !!(cpu->bc - 1);
+                store_8(cpu, ram, load_8(cpu, ram, cpu->hl++), cpu->de++);
+                if((unsigned short)--cpu->bc)
+                    cpu->pc = oldpc;
                 break;
             case 0x42: // sbc hl,bc
                 sbc_16(cpu, &cpu->hl, &cpu->bc);
@@ -632,8 +645,15 @@ static void do_emulation(struct cpu *cpu, unsigned char *restrict ram){
                 cpu->f_n = 0;
                 break;
             case 0xb8: // lddr
-                do store_8(cpu, ram, load_8(cpu, ram, cpu->hl--), cpu->de--);
-                while ((unsigned short)--cpu->bc);
+                // do store_8(cpu, ram, load_8(cpu, ram, cpu->hl--), cpu->de--);
+                // while ((unsigned short)--cpu->bc);
+                cpu->f_n = 0;
+                cpu->f_h = 0;
+                cpu->f_pv = !!(cpu->bc - 1);
+                store_8(cpu, ram, load_8(cpu, ram, cpu->hl--), cpu->de--);
+                if((unsigned short)--cpu->bc)
+                    cpu->pc = oldpc;
+
                 break;
             default:
                 puts("0xed means Extended Instruction");
@@ -1266,9 +1286,9 @@ static void do_emulation(struct cpu *cpu, unsigned char *restrict ram){
             puts("plain top level instruction");
 fail:
             printf("Ran at %04hx %04hx %04hx\n",oldoldoldpc,oldoldpc,oldpc);
-            printf("Bytes %02hhx %02hhx %02hhx %02hhx %02hhx %02hhx at 0x%04hx after %llu run\n",
-                ram[cpu->pc-2],
-                ram[cpu->pc-1],
+            printf("Bytes %02hhx %02hhx [%02hhx] %02hhx %02hhx %02hhx at 0x%04hx after %llu run\n",
+                ram[(unsigned short)(cpu->pc-2)],
+                ram[(unsigned short)(cpu->pc-1)],
                 ram[cpu->pc],
                 ram[cpu->pc+1],
                 ram[cpu->pc+2],
@@ -1288,7 +1308,10 @@ fail:
 
 int main(int argc, char const *argv[]) {
     (void)argc;
-    unsigned char ram[65536 + 3] = {0}; // 3 for printing opcode bytes easily
+    //unsigned char ram[65536 + 3] = {0}; // 3 for printing opcode bytes easily
+    unsigned char *ram = map_a_new_file_shared("ram.bin", 0x10000);
+    writers = map_a_new_file_shared("writers.bin", 0x10000 * sizeof(short)); // debug stuff
+    mem_tracker = map_a_new_file_shared("mem_tracker.bin", 0x10000); // debug stuff
 
     FILE *fp = fopen(argv[1], "rb");
     if (!fp){
