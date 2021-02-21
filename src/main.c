@@ -154,6 +154,40 @@ static unsigned sub_8(struct cpu *cpu, unsigned x){
     cpu->f_s  = (rflags>>7)&1;
 
     return src_dst;
+
+/* sbc_8 code:
+    unsigned long rflags = cpu->f_pv<<11 | (cpu->f & 0xd1);
+    unsigned long src = x;
+    unsigned long src_dst = cpu->a;
+
+    __asm__ __volatile__ (
+        "pushfq\n\t"
+
+        "pushfq\n\t"
+        "andw $0xf72a,0(%%rsp)\n\t"
+        "orw %w0,0(%%rsp)\n\t"
+        "popfq\n\t"
+
+        "sbbb %b2, %b1\n\t"
+
+        "pushfq\n\t"
+        "popq %0\n\t"
+
+        "popfq\n\t"
+
+        :"+&q"(rflags),"+&q"(src_dst)
+        :"q"(src)
+    );
+
+    cpu->f_c  = (rflags>>0)&1;
+    cpu->f_n  = 1;
+    cpu->f_pv = (rflags>>11)&1;
+    cpu->f_h  = (rflags>>4)&1;
+    cpu->f_z  = (rflags>>6)&1;
+    cpu->f_s  = (rflags>>7)&1;
+
+    return src_dst;
+*/
 }
 
 static void inc_8(struct cpu *cpu, unsigned char *p){
@@ -1324,12 +1358,15 @@ static void do_emulation(struct cpu *cpu, unsigned char *restrict ram){
             if(--cpu->b)
                 cpu->pc = (short)(signed char)byte1 + cpu->pc;
             break;
-        case 0x79: // sub a
+        case 0x97: // sub a
             cpu->a = sub_8(cpu, cpu->a);
             break;
         case 0xc6: // add a,*
             byte1 = imm_8(cpu, ram);
             cpu->a = add_8(cpu, byte1, cpu->a);
+            break;
+        case 0x79: // ld a,c
+            cpu->a = cpu->c;
             break;
         default:
             puts("plain top level instruction");
