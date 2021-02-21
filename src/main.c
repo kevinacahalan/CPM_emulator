@@ -536,21 +536,37 @@ static void do_emulation(struct cpu *cpu, unsigned char *restrict ram){
         //     cpu->pc,
         //     ran++
         // );
-
-        fprintf(fp, "Bytes %02hhx %02hhx %02hhx %02hhx pc:%04hx af:%04hx sp:%04hx hl:%04hx de:%04hx bc:%04hx ix:%04hx iy:%04hx\n",
-            ram[cpu->pc],
-            ram[cpu->pc+1],
-            ram[cpu->pc+2],
-            ram[cpu->pc+3],
-            cpu->pc,
-            cpu->af& 0xffd7 & 0xffef, // hide reserved bits and half carry
-            cpu->sp, 
-            cpu->hl, 
-            cpu->de,
-            cpu->bc, 
-            cpu->ix, 
-            cpu->iy
-        );
+        
+        ////////////////////////////////////////////////////////////////////////////        
+        cpu->f &= 0x41;  // only Z and C matter for gorillas
+#if 1
+        static int i_am_recording;
+        static int how_many_printed;
+        if(!how_many_printed && !i_am_recording && cpu->pc==0x0aee)
+            i_am_recording = 1;
+        
+        if(i_am_recording){ 
+            fprintf(fp, "Bytes %02hhx %02hhx %02hhx %02hhx pc:%04hx af:%04hx sp:%04hx hl:%04hx de:%04hx bc:%04hx ix:%04hx iy:%04hx\n",
+                ram[cpu->pc],
+                ram[cpu->pc+1],
+                ram[cpu->pc+2],
+                ram[cpu->pc+3],
+                cpu->pc,
+                cpu->af& 0xffd7 & 0xffef, // hide reserved bits and half carry
+                cpu->sp, 
+                cpu->hl, 
+                cpu->de,
+                cpu->bc, 
+                cpu->ix, 
+                cpu->iy
+            );
+            fflush(fp);
+            
+            how_many_printed++;
+            if(how_many_printed > 70000)
+                i_am_recording = 0;
+        }
+#endif
 
         // fprintf(stdout, "Bytes %02hhx %02hhx %02hhx %02hhx pc:%04hx af:%04hx sp:%04hx hl:%04hx de:%04hx bc:%04hx ix:%04hx iy:%04hx\n",
         //     ram[cpu->pc],
@@ -1310,8 +1326,10 @@ int main(int argc, char const *argv[]) {
     (void)argc;
     //unsigned char ram[65536 + 3] = {0}; // 3 for printing opcode bytes easily
     unsigned char *ram = map_a_new_file_shared("ram.bin", 0x10000);
+    memset(ram, 0x76, 0x10000); // HALT instruction
     writers = map_a_new_file_shared("writers.bin", 0x10000 * sizeof(short)); // debug stuff
     mem_tracker = map_a_new_file_shared("mem_tracker.bin", 0x10000); // debug stuff
+
 
     FILE *fp = fopen(argv[1], "rb");
     if (!fp){
@@ -1331,7 +1349,7 @@ int main(int argc, char const *argv[]) {
     ram[7] = 0xfe;
     cpu->af = 0x0000;
     cpu->sp = 0xfeed;
-        
+
     // should put some fancy stuff here with a loop to deal with more then 1 guest arg
     strcpy((char *)ram + 0x82, argv[2] ? argv[2] : "");
     ram[0x81] = ' ';

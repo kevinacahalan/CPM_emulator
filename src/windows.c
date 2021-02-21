@@ -9,7 +9,6 @@
 #include <winbase.h>
 
 
-
 /*
 cfa_flags = writing_file ? GENERIC_READ|GENERIC_WRITE : GENERIC_READ
 cfm_flags = writing_ram  ? PAGE_READWRITE : PAGE_READ
