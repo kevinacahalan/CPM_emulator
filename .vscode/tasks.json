@@ -1,0 +1,81 @@
+// For possible updates, fixes, or improved documentation on the use of this
+// workspace folder go to https://github.com/killlmoo/c_wsf_pre_made/
+
+///////////////////////////////////////////////////////////////////////////////////////////////////////
+/// 
+/// For this workspace folder to work YOU MUST HAVE gcc & gdb on you path!
+///	
+/// You must also have the C/C++ VScode extention from microsoft installed.	
+/// Uninstall any other extension having to do with C/C++ as these extentions	
+/// might fight with the one from Microsoft, exp the extension from Austin, or
+/// that extension called "CodeRunner"...	
+///	
+/// You must also have your Workspace folder structured to have a	
+/// separate sub-folder for each program you want to compile. Each
+/// program-folder can only have one source file with a main() function.
+///	
+///	
+/// How to get gcc & gdb on your PATH:
+/// 
+/// Windows:
+/// Download mingw-w64 gcc/gdb from http://mingw-w64.org/doku.php/download/mingw-builds
+/// Next run the installer and install mingw-w64 at the default location or some location you won't forget.
+/// Next add mingw-w64 to the PATH.
+/// For a detail guild on this: https://azrael.digipen.edu/~mmead/www/public/mingw/
+/// After putting mingw-w64 on the path restart VScode so that it gets an updated PATH.
+///	
+/// Linux:
+/// Debain based install:
+/// `sudo apt-get update`
+/// `sudo apt-get install gcc gdb`
+///
+/// Arch based install:
+/// `sudo pacman -Syu`
+/// `sudo pacman -Sy gcc gdb`
+/// After installing gcc & gdb restart VScode so that it gets an updated PATH.
+///
+/// Mac:
+/// To install: `xcode-select --install`
+/// After installing restart VScode so that it gets an updated PATH, you might need to re-login.
+/// The `xcode-select --install` command actually installs clang & lldb, not gcc & gdb.
+/// On mac if you have clang installed the gcc command runs clang, don't worry
+/// about this sense the two compilers for your proposes are probably the same.
+/// If you really want gcc this video shows you how: https://www.youtube.com/watch?v=0z-fCNNqfEg
+///
+///
+/// To check if you successfully got gcc & gdb on your path	run `gcc -v` and `gdb -v`
+///
+///////////////////////////////////////////////////////////////////////////////////////////////////////
+
+
+{
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"type": "shell",
+			"label": "Build all source files in folder of currently selected file, PLEASE!",
+			"command": "make",
+			
+			//Args for linux
+			"linux": {
+				"args": [
+					"-k",
+				],
+			},
+
+
+			"options": {
+				"cwd": "${workspaceFolder}/src" //compile command is run from the workspace folder
+				//"cwd": "${fileDirname}" //compile command is run from directory of current selected file
+
+			},
+			"problemMatcher": [
+				"$gcc" //Change to "$clang" using clang compiler
+			],
+			"group": {
+				"kind": "build",
+				"isDefault": true
+			}
+		}
+	]
+}
