@@ -525,6 +525,16 @@ static void do_emulation(struct cpu *cpu, unsigned char *restrict ram){
     unsigned short oldoldoldpc = 0xffff;
     unsigned short oldoldpc = 0xffff;
     unsigned short oldpc = 0xffff;
+
+    {
+        FILE *ram_file = fopen("/home/man/Desktop/Dev/ref_z80_emu/tnylpo/ram_at_start.bin", "rb");
+        if(!ram_file)
+            exit(45);
+
+        fread(ram, 0x10000, 1, ram_file);
+        fclose(ram_file);
+    }
+
     for(;;){
         ran++;
 
@@ -540,13 +550,13 @@ static void do_emulation(struct cpu *cpu, unsigned char *restrict ram){
         ////////////////////////////////////////////////////////////////////////////        
         cpu->f &= 0x41;  // only Z and C matter for gorillas
 #if 1
-        static int i_am_recording;
-        static int how_many_printed;
-        if(!how_many_printed && !i_am_recording && cpu->pc==0x0aee)
-            i_am_recording = 1;
-        
-        if(i_am_recording){ 
-            fprintf(fp, "Bytes %02hhx %02hhx %02hhx %02hhx pc:%04hx af:%04hx sp:%04hx hl:%04hx de:%04hx bc:%04hx ix:%04hx iy:%04hx\n",
+        const unsigned long print_start = 0x19b00;
+        const unsigned long prints_wanted = 10000;
+
+
+        if(ran > print_start){ 
+            fprintf(fp, "%016llx Bytes %02hhx %02hhx %02hhx %02hhx pc:%04hx af:%04hx sp:%04hx hl:%04hx de:%04hx bc:%04hx ix:%04hx iy:%04hx\n",
+                ran,
                 ram[cpu->pc],
                 ram[cpu->pc+1],
                 ram[cpu->pc+2],
@@ -561,10 +571,8 @@ static void do_emulation(struct cpu *cpu, unsigned char *restrict ram){
                 cpu->iy
             );
             fflush(fp);
-            
-            how_many_printed++;
-            if(how_many_printed > 70000)
-                i_am_recording = 0;
+            if(ran > print_start + prints_wanted)
+                exit(0);
         }
 #endif
 
@@ -1028,12 +1036,23 @@ static void do_emulation(struct cpu *cpu, unsigned char *restrict ram){
             case 0:
                 switch (byte1 >> 3 & 0x07){
                 case 0: // rlc
-                    puts("asdasd");
-                    exit(2);
+                    byte2 = *ptr_u8;
+                    *ptr_u8 = *ptr_u8 << 1 | *ptr_u8 >> 7;
+                    cpu->f_c = byte2 >> 7;
+                    cpu->f_n = 0;
+                    cpu->f_h = 0;
+                    cpu->f_z = !*ptr_u8;
+                    cpu->f_s = *ptr_u8 >> 7;
+                    cpu->f_pv = parity(*ptr_u8);
                     break;
                 case 1: // rrc
-                    puts("asdasd");
-                    exit(2);
+                    cpu->f_c = *ptr_u8 & 1;
+                    *ptr_u8  = *ptr_u8 >> 1 | *ptr_u8 << 7;
+                    cpu->f_n = 0;
+                    cpu->f_h = 0;
+                    cpu->f_z = !*ptr_u8;
+                    cpu->f_s = *ptr_u8 >> 7;
+                    cpu->f_pv = parity(*ptr_u8);
                     break;
                 case 2: // rl
                     byte2 = *ptr_u8;
@@ -1046,13 +1065,15 @@ static void do_emulation(struct cpu *cpu, unsigned char *restrict ram){
                     cpu->f_pv = parity(*ptr_u8);
                     break;
                 case 3: // rr
-                    cpu->f_c = *ptr_u8 & 1;
-                    *ptr_u8 = *ptr_u8 >> 1 | *ptr_u8 << 7;
+                    byte2 = *ptr_u8;
+                    *ptr_u8  = *ptr_u8 >> 1 | cpu->f_c << 7;
+                    cpu->f_c = byte2 & 1;
                     cpu->f_n = 0;
                     cpu->f_h = 0;
                     cpu->f_z = !*ptr_u8;
                     cpu->f_s = *ptr_u8 >> 7;
                     cpu->f_pv = parity(*ptr_u8);
+
                     break;
                 case 4: // sla
                 case 6: // sll ( undocumented )
