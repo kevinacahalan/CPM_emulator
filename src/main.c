@@ -595,7 +595,7 @@ static void do_emulation(struct cpu *cpu, unsigned char *restrict ram){
         
         ////////////////////////////////////////////////////////////////////////////        
         cpu->f &= 0x41;  // only Z and C matter for gorillas
-#if 1
+#if 0
         const unsigned long print_start = 0x19f80;
         const unsigned long prints_wanted = 2000;
 
@@ -724,6 +724,15 @@ static void do_emulation(struct cpu *cpu, unsigned char *restrict ram){
                 if((unsigned short)--cpu->bc)
                     cpu->pc = oldpc;
 
+                break;
+            case 0xb1: // cpir
+                cpu->f_n = 1;
+                cpu->f_h = 0;
+                cpu->f_pv = 0;
+                // store_8(cpu, ram, load_8(cpu, ram, cpu->hl--), cpu->de--);
+                cp_8(cpu, load_8(cpu, ram, cpu->hl++));
+                if((unsigned short)--cpu->bc && !cpu->f_z)
+                    cpu->pc = oldpc;
                 break;
             default:
                 puts("0xed means Extended Instruction");
@@ -1367,6 +1376,9 @@ static void do_emulation(struct cpu *cpu, unsigned char *restrict ram){
             break;
         case 0x79: // ld a,c
             cpu->a = cpu->c;
+            break;
+        case 0x7b: // ld a,e
+            cpu->a = cpu->e;
             break;
         default:
             puts("plain top level instruction");
