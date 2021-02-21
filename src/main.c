@@ -251,6 +251,7 @@ static unsigned sbc_8(struct cpu *cpu, unsigned x){
     // return alu_8_add(cpu, x, ~y, 1);
     // cpu->f_n = 1;
 
+#if 1
     unsigned long rflags = cpu->f_pv<<11 | (cpu->f & 0xd1);
     unsigned long src = x;
     unsigned long src_dst = cpu->a;
@@ -282,6 +283,17 @@ static unsigned sbc_8(struct cpu *cpu, unsigned x){
     cpu->f_s  = (rflags>>7)&1;
 
     return src_dst;
+#endif
+#if 0
+    unsigned tmp = cpu->a - x - cpu->f_c;
+    cpu->f_c    = tmp >> 8;
+    cpu->f_s    = tmp >> 7;
+    cpu->f_pv   = (cpu->a ^ x ^ cpu->f_c) >> 7; //might be wrong
+    cpu->f_n    = 1;
+    cpu->f_z = !(unsigned char)tmp;
+    return (unsigned char)tmp;
+#endif
+
 }
 
 static unsigned add16(struct cpu *cpu, unsigned x, unsigned y, unsigned carry_in){
@@ -550,8 +562,8 @@ static void do_emulation(struct cpu *cpu, unsigned char *restrict ram){
         ////////////////////////////////////////////////////////////////////////////        
         cpu->f &= 0x41;  // only Z and C matter for gorillas
 #if 1
-        const unsigned long print_start = 0x19b00;
-        const unsigned long prints_wanted = 10000;
+        const unsigned long print_start = 0x19f80;
+        const unsigned long prints_wanted = 2000;
 
 
         if(ran > print_start){ 
@@ -1278,7 +1290,7 @@ static void do_emulation(struct cpu *cpu, unsigned char *restrict ram){
             break;
         case 0xde: // sbc a,*
             byte1 = imm_8(cpu, ram);
-            sbc_8(cpu, byte1);
+            cpu->a = sbc_8(cpu, byte1);
             break;
         case 0xa1: // and c
             and_8(cpu, cpu->c);
