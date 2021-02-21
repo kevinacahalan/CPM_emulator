@@ -24,7 +24,8 @@ QUOTE_ARG  = '$(subst ','\'',$1)'#'
 endif
 
 
-NAME := $(notdir $(CURDIR))
+#NAME := $(notdir $(CURDIR))
+NAME := CPM_emu
 
 .SUFFIXES:
 .SUFFIXES: .o .s .S .asm .l .y .c .cpp .cxx .cc .c++
