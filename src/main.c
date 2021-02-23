@@ -786,6 +786,15 @@ static void do_emulation(struct cpu *cpu, unsigned char *restrict ram){
             case 0x2a: // ld iy,(**)
                 cpu->iy = load_16(cpu, ram, imm_16(cpu, ram));
                 break;
+            case 0x22: // ld (**),iy
+                store_16(cpu, ram, cpu->iy,imm_16(cpu, ram));
+                break;
+            case 0x6e: // ld l,(iy+*)
+                cpu->l = load_8(cpu, ram, (unsigned short)(cpu->iy + imm_8(cpu, ram)));
+                break;
+            case 0x66: // ld h,(iy+*)
+                cpu->h = load_8(cpu, ram, (unsigned short)(cpu->iy + imm_8(cpu, ram)));
+                break;
             default:
                 puts("0xfd is an IY instruction");
                 goto fail;
@@ -1379,6 +1388,9 @@ static void do_emulation(struct cpu *cpu, unsigned char *restrict ram){
             break;
         case 0x7b: // ld a,e
             cpu->a = cpu->e;
+            break;
+        case 0x34: // inc (hl)
+            inc_8(cpu, ram + cpu->hl);
             break;
         default:
             puts("plain top level instruction");
