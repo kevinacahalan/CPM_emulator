@@ -4,6 +4,7 @@
 #include <string.h>
 #include "portable.h"
 
+#define BIOS_BASE 0xff00
 
 struct cpu{
     unsigned short pc; // Instruction Pointer  /  Program Counter
@@ -565,6 +566,36 @@ static unsigned short bdos(
     }
 }
 
+static void bios(struct cpu *restrict const cpu, unsigned char *restrict const ram, unsigned short val){
+    switch (cpu->pc - BIOS_BASE)
+    {
+    // case 0x00: // BOOT      arrive here from cold start load
+    // case 0x03: // WBOOT
+    // case 0x06: // CONST
+    // case 0x09: // CONIN
+    case 0x0c: // CONOUT
+        putchar(cpu->c);
+        fflush(stdout);
+        break;
+    case 0x0f: // LIST
+    case 0x12: // PUNCH
+    case 0x15: // READER
+    case 0x18: // HOME
+    case 0x1b: // SELDSK
+    case 0x1e: // SETTRK
+    case 0x21: // SETSEC
+    case 0x24: // SETDMA
+    case 0x27: // READ
+    case 0x2a: // WRITE
+    case 0x2d: // LISTST
+    case 0x30: // SECTRAN   sector translate subroutine
+    default:
+        fprintf(stderr, "Unhandled bios call %02hx\n", val);
+        exit(1);
+        break;
+    }
+}
+
 static void do_emulation(struct cpu *cpu, unsigned char *restrict ram){
     FILE *fp = fopen("debug.txt", "wb");
     unsigned long long ran = 0;
@@ -596,7 +627,7 @@ static void do_emulation(struct cpu *cpu, unsigned char *restrict ram){
         ////////////////////////////////////////////////////////////////////////////        
         cpu->f &= 0x41;  // only Z and C matter for gorillas
 #if 0
-        const unsigned long print_start = 0x19f80;
+        const unsigned long print_start = 291000;
         const unsigned long prints_wanted = 2000;
 
 
@@ -641,11 +672,27 @@ static void do_emulation(struct cpu *cpu, unsigned char *restrict ram){
         oldoldpc = oldpc;
         oldpc = cpu->pc;
 
+
+        if(cpu->pc >= BIOS_BASE && cpu->pc <= BIOS_BASE + 0x30){
+            bios(cpu, ram, cpu->pc - BIOS_BASE);
+            cpu->pc = pop_16(cpu,ram); // ret
+            continue;
+        }
+
+        if(cpu->pc == 5){
+            cpu->hl = bdos(ram, cpu->c, cpu->de);
+            cpu->a = cpu->l;
+            cpu->b = cpu->h;
+            cpu->pc = pop_16(cpu, ram); // Undo the push_16 above
+            continue;
+        }
+
         if(cpu->pc < 0x0100 || cpu->pc > 30300){ // tmp debug code
             puts("highly suspect PC value");
             goto fail;
         }
 
+        // fetch next instruction byte
         unsigned char opcode = imm_8(cpu, ram);
 
         unsigned char byte1;
@@ -795,6 +842,9 @@ static void do_emulation(struct cpu *cpu, unsigned char *restrict ram){
             case 0x66: // ld h,(iy+*)
                 cpu->h = load_8(cpu, ram, (unsigned short)(cpu->iy + imm_8(cpu, ram)));
                 break;
+            case 0x7e: // ld a,(iy+*)
+                cpu->a = load_8(cpu, ram, (unsigned short)(cpu->iy + imm_8(cpu, ram)));
+                break;
             default:
                 puts("0xfd is an IY instruction");
                 goto fail;
@@ -932,12 +982,12 @@ static void do_emulation(struct cpu *cpu, unsigned char *restrict ram){
             push_16(cpu, ram, cpu->pc);
             cpu->pc = tmp_ushort;
 
-            if(cpu->pc == 5){
-                cpu->hl = bdos(ram, cpu->c, cpu->de);
-                cpu->a = cpu->l;
-                cpu->b = cpu->h;
-                cpu->pc = pop_16(cpu, ram); // Undo the push_16 above
-            }
+            // if(cpu->pc == 5){
+            //     cpu->hl = bdos(ram, cpu->c, cpu->de);
+            //     cpu->a = cpu->l;
+            //     cpu->b = cpu->h;
+            //     cpu->pc = pop_16(cpu, ram); // Undo the push_16 above
+            // }
 
             break;
         case 0xf3: // di
@@ -1301,12 +1351,12 @@ static void do_emulation(struct cpu *cpu, unsigned char *restrict ram){
                 push_16(cpu, ram, cpu->pc);
                 cpu->pc = tmp_ushort;
 
-                if(cpu->pc == 5){
-                    cpu->hl = bdos(ram, cpu->c, cpu->de);
-                    cpu->a = cpu->l;
-                    cpu->b = cpu->h;
-                    cpu->pc = pop_16(cpu, ram); // Undo the push_16 above
-                }
+                // if(cpu->pc == 5){
+                //     cpu->hl = bdos(ram, cpu->c, cpu->de);
+                //     cpu->a = cpu->l;
+                //     cpu->b = cpu->h;
+                //     cpu->pc = pop_16(cpu, ram); // Undo the push_16 above
+                // }
             }
             break;
         case 0xbd: // cp l
@@ -1391,6 +1441,14 @@ static void do_emulation(struct cpu *cpu, unsigned char *restrict ram){
             break;
         case 0x34: // inc (hl)
             inc_8(cpu, ram + cpu->hl);
+            break;
+        case 0x1e: // ld e,*
+            byte1 = imm_8(cpu, ram);
+            cpu->e = byte1;
+            break;
+        case 0x0e: // ld c,*
+            byte1 = imm_8(cpu, ram);
+            cpu->c = byte1;
             break;
         default:
             puts("plain top level instruction");
