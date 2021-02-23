@@ -552,7 +552,11 @@ static unsigned short bdos(
     case 0x06: // Direct Console I/O
         tmp_byte = parameter & 0xff;
         if(tmp_byte == 0xff){
-            printf("\n\n\nTHEY WANT INPUT\n\n\n");
+            // printf("\n\n\nTHEY WANT INPUT\n\n\n");
+            // exit(2);
+            return (char)getchar();
+        }else if(tmp_byte == 0xfe){
+            printf("\n\n\nTHEY WANT STATUS\n\n\n");
             exit(2);
             return 0x00; // no char ready
         }else{
@@ -844,6 +848,15 @@ static void do_emulation(struct cpu *cpu, unsigned char *restrict ram){
                 break;
             case 0x7e: // ld a,(iy+*)
                 cpu->a = load_8(cpu, ram, (unsigned short)(cpu->iy + imm_8(cpu, ram)));
+                break;
+            case 0x36: // ld (iy+*),*
+                byte1 = imm_8(cpu, ram);
+                byte2 = imm_8(cpu, ram);
+                store_8(cpu, ram, byte2, cpu->iy + byte1);
+                break;
+            case 0x77: // ld (iy+*),a
+                byte1 = imm_8(cpu, ram);
+                store_8(cpu, ram, cpu->a, cpu->iy + byte1);
                 break;
             default:
                 puts("0xfd is an IY instruction");
@@ -1263,6 +1276,10 @@ static void do_emulation(struct cpu *cpu, unsigned char *restrict ram){
             if (cpu->f_c)
                 cpu->pc = pop_16(cpu,ram);
             break;
+        case 0xc8: // ret z
+            if (cpu->f_z)
+                cpu->pc = pop_16(cpu,ram);
+            break;
         case 0x7a: // ld a,d
             cpu->a = cpu->d;
             break;
@@ -1449,6 +1466,10 @@ static void do_emulation(struct cpu *cpu, unsigned char *restrict ram){
         case 0x0e: // ld c,*
             byte1 = imm_8(cpu, ram);
             cpu->c = byte1;
+            break;
+        case 0x3f: // ccf
+            cpu->f_h = cpu->f_c;
+            cpu->f_c = !cpu->f_c;
             break;
         default:
             puts("plain top level instruction");
