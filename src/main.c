@@ -5,6 +5,7 @@
 #include "portable.h"
 
 #define BIOS_BASE 0xff00
+#define BDOS_BASE 0xfef5
 
 struct cpu{
     unsigned short pc; // Instruction Pointer  /  Program Counter
@@ -459,7 +460,7 @@ static unsigned char imm_8(struct cpu *restrict const cpu, const unsigned char *
     unsigned char low = ram[addr];
     mem_tracker[addr] |= 0x04;
 
-    if(mem_tracker[addr] != 0x04){
+    if(mem_tracker[addr] & 0x02){
         printf("Detected bad stuff, address %04hx last written by %04hx\n", addr, writers[addr]);
         exit(44);
     }
@@ -571,7 +572,7 @@ static unsigned short bdos(
 }
 
 static void bios(struct cpu *restrict const cpu, unsigned char *restrict const ram, unsigned short val){
-    switch (cpu->pc - BIOS_BASE)
+    switch (val)
     {
     // case 0x00: // BOOT      arrive here from cold start load
     // case 0x03: // WBOOT
@@ -597,6 +598,16 @@ static void bios(struct cpu *restrict const cpu, unsigned char *restrict const r
         fprintf(stderr, "Unhandled bios call %02hx\n", val);
         exit(1);
         break;
+    }
+}
+
+static void do_bios_or_bdos(struct cpu *restrict const cpu, unsigned char *restrict const ram, unsigned short oldpc){
+    if(oldpc == 0xffed){
+        cpu->hl = bdos(ram, cpu->c, cpu->de);
+        cpu->a = cpu->l;
+        cpu->b = cpu->h;
+    }else{
+        bios(cpu, ram, (oldpc - 0xffef) * 3 + 3);
     }
 }
 
@@ -630,9 +641,9 @@ static void do_emulation(struct cpu *cpu, unsigned char *restrict ram){
         
         ////////////////////////////////////////////////////////////////////////////        
         cpu->f &= 0x41;  // only Z and C matter for gorillas
-#if 0
+#if 1
         const unsigned long print_start = 291000;
-        const unsigned long prints_wanted = 2000;
+    const unsigned long prints_wanted = 50000;
 
 
         if(ran > print_start){ 
@@ -677,24 +688,25 @@ static void do_emulation(struct cpu *cpu, unsigned char *restrict ram){
         oldpc = cpu->pc;
 
 
-        if(cpu->pc >= BIOS_BASE && cpu->pc <= BIOS_BASE + 0x30){
-            bios(cpu, ram, cpu->pc - BIOS_BASE);
-            cpu->pc = pop_16(cpu,ram); // ret
-            continue;
-        }
+        // if(cpu->pc >= BIOS_BASE && cpu->pc <= BIOS_BASE + 0x30){
+        //     bios(cpu, ram, cpu->pc - BIOS_BASE);
+        //     // ran++;
+        //     cpu->pc = pop_16(cpu,ram); // ret
+        //     continue;
+        // }
 
-        if(cpu->pc == 5){
-            cpu->hl = bdos(ram, cpu->c, cpu->de);
-            cpu->a = cpu->l;
-            cpu->b = cpu->h;
-            cpu->pc = pop_16(cpu, ram); // Undo the push_16 above
-            continue;
-        }
+        // if(cpu->pc == 5){
+        //     cpu->hl = bdos(ram, cpu->c, cpu->de);
+        //     cpu->a = cpu->l;
+        //     cpu->b = cpu->h;
+        //     cpu->pc = pop_16(cpu, ram); // Undo the push_16 above
+        //     continue;
+        // }
 
-        if(cpu->pc < 0x0100 || cpu->pc > 30300){ // tmp debug code
-            puts("highly suspect PC value");
-            goto fail;
-        }
+        // if(cpu->pc < 0x0100 || cpu->pc > 30300){ // tmp debug code
+        //     puts("highly suspect PC value");
+        //     goto fail;
+        // }
 
         // fetch next instruction byte
         unsigned char opcode = imm_8(cpu, ram);
@@ -1271,6 +1283,8 @@ static void do_emulation(struct cpu *cpu, unsigned char *restrict ram){
             break;
         case 0xc9: // ret
             cpu->pc = pop_16(cpu,ram);
+            if(oldpc >= BDOS_BASE)
+                do_bios_or_bdos(cpu, ram, oldpc);
             break;
         case 0xd8: // ret c
             if (cpu->f_c)
