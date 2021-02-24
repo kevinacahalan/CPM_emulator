@@ -5,6 +5,7 @@
             "includePath": [
                 "${workspaceFolder}/**",
                 "/usr/include",
+                "/usr/include/**",
                 "/usr/include/sys"
             ],
             "defines": [],
