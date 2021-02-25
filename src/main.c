@@ -3,6 +3,7 @@
 #include <stdint.h>
 #include <string.h>
 #include <termios.h>
+#include <time.h>
 #include "portable.h"
 
 #define BIOS_BASE 0xff00
@@ -544,10 +545,8 @@ static unsigned short bdos(
         );
         //exit(2);
         return 0xff;
-        break;
     case 0x23: // get file size or something
         return 0xff;
-        break;
     case 0x00: // System Reset, exit
         puts("Good Bye");
         exit(0);
@@ -572,6 +571,36 @@ static unsigned short bdos(
             putchar(parameter & 0xff);
             fflush(stdout);
             return 0x00; // might be wrong
+        }
+    case 0x69: // Time
+        {
+            long tmp = time(NULL) - 252460800; // time since 1978
+			struct{
+				unsigned short day;
+				unsigned char hour_high:4;
+				unsigned char hour_low:4;
+				unsigned char minute_high:4;
+				unsigned char minute_low:4;				
+			}cpm_time;
+			cpm_time.day = tmp/(24 * 60 * 60);
+			tmp %= 24 * 60 * 60;
+			cpm_time.hour_high = tmp/(60 * 60) / 10;
+			cpm_time.hour_low = tmp/(60 * 60) % 10;
+			tmp %= 60 * 60;
+			cpm_time.minute_high = tmp/(60) / 10;
+			cpm_time.minute_low = tmp/(60) % 10;
+			tmp %= 60;
+
+			struct{
+				unsigned char seconds_high:4;
+				unsigned char seconds_low:4;				
+			}cpm_seconds;
+			cpm_seconds.seconds_high = tmp/(60) / 10;
+			cpm_seconds.seconds_low = tmp/(60) % 10;
+
+			memcpy(ram + parameter, &cpm_time, sizeof cpm_time);
+
+			return *(unsigned char*)&cpm_seconds;
         }
     default:
         printf("Function: %02hhx, parameter: %04hx\n", function, parameter);
@@ -785,6 +814,10 @@ static void do_emulation(struct cpu *cpu, unsigned char *restrict ram){
                 cpu->hl = add16(cpu, cpu->hl, cpu->hl, cpu->f_c);
                 cpu->f_n = 0;
                 break;
+			case 0x4a: // adc hl,bc
+                cpu->hl = add16(cpu, cpu->hl, cpu->bc, cpu->f_c);
+                cpu->f_n = 0;
+                break;
             case 0xb8: // lddr
                 // do store_8(cpu, ram, load_8(cpu, ram, cpu->hl--), cpu->de--);
                 // while ((unsigned short)--cpu->bc);
@@ -897,6 +930,11 @@ static void do_emulation(struct cpu *cpu, unsigned char *restrict ram){
         case 0xca: // jp z,**
             tmp_ushort = imm_16(cpu, ram);
             if (cpu->f_z)
+                cpu->pc = tmp_ushort;
+            break;
+        case 0xda: // jp c,**
+            tmp_ushort = imm_16(cpu, ram);
+            if (cpu->f_c)
                 cpu->pc = tmp_ushort;
             break;
         case 0xdd: // IX Instructions
@@ -1306,9 +1344,16 @@ static void do_emulation(struct cpu *cpu, unsigned char *restrict ram){
             if (cpu->f_z)
                 cpu->pc = pop_16(cpu,ram);
             break;
+        case 0xc0: // ret nz
+            if (!cpu->f_z)
+                cpu->pc = pop_16(cpu,ram);
+            break;
         case 0x7a: // ld a,d
             cpu->a = cpu->d;
             break;
+		case 0x5a: // ld e,d
+			cpu->e = cpu->d;
+			break;
         case 0xb3: // or e
             or_8(cpu, cpu->e);
             break;
@@ -1367,6 +1412,9 @@ static void do_emulation(struct cpu *cpu, unsigned char *restrict ram){
             // cpu->f_n = 0;
             adc_8(cpu, &cpu->a, load_8(cpu, ram, cpu->hl));
             break;
+        case 0xce: // adc a,*
+            adc_8(cpu, &cpu->a, imm_8(cpu, ram));
+            break;
         case 0x04: // inc b
             // byte2 = cpu->f_c;
             // cpu->b = add8(cpu, cpu->b, 1, 0);
@@ -1393,13 +1441,13 @@ static void do_emulation(struct cpu *cpu, unsigned char *restrict ram){
             if(cpu->f_c){
                 push_16(cpu, ram, cpu->pc);
                 cpu->pc = tmp_ushort;
-
-                // if(cpu->pc == 5){
-                //     cpu->hl = bdos(ram, cpu->c, cpu->de);
-                //     cpu->a = cpu->l;
-                //     cpu->b = cpu->h;
-                //     cpu->pc = pop_16(cpu, ram); // Undo the push_16 above
-                // }
+            }
+            break;
+		case 0xc4: // call nz,**
+            tmp_ushort = imm_16(cpu, ram);
+            if(!cpu->f_z){
+                push_16(cpu, ram, cpu->pc);
+                cpu->pc = tmp_ushort;
             }
             break;
         case 0xbd: // cp l
@@ -1452,6 +1500,9 @@ static void do_emulation(struct cpu *cpu, unsigned char *restrict ram){
         case 0x0d: // dec c
             dec_8(cpu, &cpu->c);
             break;
+        case 0x15: // dec d
+            dec_8(cpu, &cpu->d);
+            break;
         case 0xbe: // cp (hl)
             cp_8(cpu, load_8(cpu, ram, cpu->hl));
             break;
@@ -1461,6 +1512,9 @@ static void do_emulation(struct cpu *cpu, unsigned char *restrict ram){
         case 0x6b: // ld l,e
             cpu->l = cpu->e;
             break;
+		case 0x58: // ld e,b
+			cpu->e = cpu->b;
+			break;
         case 0x62: // ld h,d
             cpu->h = cpu->d;
             break;
@@ -1469,12 +1523,18 @@ static void do_emulation(struct cpu *cpu, unsigned char *restrict ram){
             if(--cpu->b)
                 cpu->pc = (short)(signed char)byte1 + cpu->pc;
             break;
+		case 0x93: // sub e
+            cpu->a = sub_8(cpu, cpu->e);
+            break;
         case 0x97: // sub a
             cpu->a = sub_8(cpu, cpu->a);
             break;
         case 0xc6: // add a,*
             byte1 = imm_8(cpu, ram);
             cpu->a = add_8(cpu, byte1, cpu->a);
+            break;
+        case 0x83: // add a,e
+            cpu->a = add_8(cpu, cpu->e, cpu->a);
             break;
         case 0x79: // ld a,c
             cpu->a = cpu->c;
