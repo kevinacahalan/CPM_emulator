@@ -1037,7 +1037,60 @@ static void do_emulation(struct cpu *cpu, unsigned char *restrict ram){
             cpu->f_h = 0;
             cpu->f_z = !cpu->a;
             cpu->f_s = cpu->a >> 7; // take sign bit and put it in f_s
-
+            break;
+        case 0xa8: // xor b
+            cpu->a ^= cpu->b;
+            cpu->f_c = 0;
+            cpu->f_n = 0;
+            cpu->f_pv = parity(cpu->a);
+            cpu->f_h = 0;
+            cpu->f_z = !cpu->a;
+            cpu->f_s = cpu->a >> 7; // take sign bit and put it in f_s
+            break;
+        case 0xa9: // xor e
+            cpu->a ^= cpu->e;
+            cpu->f_c = 0;
+            cpu->f_n = 0;
+            cpu->f_pv = parity(cpu->a);
+            cpu->f_h = 0;
+            cpu->f_z = !cpu->a;
+            cpu->f_s = cpu->a >> 7; // take sign bit and put it in f_s
+            break;
+        case 0xaa: // xor d
+            cpu->a ^= cpu->d;
+            cpu->f_c = 0;
+            cpu->f_n = 0;
+            cpu->f_pv = parity(cpu->a);
+            cpu->f_h = 0;
+            cpu->f_z = !cpu->a;
+            cpu->f_s = cpu->a >> 7; // take sign bit and put it in f_s
+            break;
+        case 0xab: // xor e
+            cpu->a ^= cpu->e;
+            cpu->f_c = 0;
+            cpu->f_n = 0;
+            cpu->f_pv = parity(cpu->a);
+            cpu->f_h = 0;
+            cpu->f_z = !cpu->a;
+            cpu->f_s = cpu->a >> 7; // take sign bit and put it in f_s
+            break;
+        case 0xac: // xor h
+            cpu->a ^= cpu->h;
+            cpu->f_c = 0;
+            cpu->f_n = 0;
+            cpu->f_pv = parity(cpu->a);
+            cpu->f_h = 0;
+            cpu->f_z = !cpu->a;
+            cpu->f_s = cpu->a >> 7; // take sign bit and put it in f_s
+            break;
+        case 0xad: // xor l
+            cpu->a ^= cpu->l;
+            cpu->f_c = 0;
+            cpu->f_n = 0;
+            cpu->f_pv = parity(cpu->a);
+            cpu->f_h = 0;
+            cpu->f_z = !cpu->a;
+            cpu->f_s = cpu->a >> 7; // take sign bit and put it in f_s
             break;
         case 0x67: // ld h,a
             cpu->h = cpu->a;
@@ -1354,6 +1407,9 @@ static void do_emulation(struct cpu *cpu, unsigned char *restrict ram){
 		case 0x5a: // ld e,d
 			cpu->e = cpu->d;
 			break;
+		case 0x53: // ld d,e
+			cpu->d = cpu->e;
+			break;
         case 0xb3: // or e
             or_8(cpu, cpu->e);
             break;
@@ -1485,6 +1541,24 @@ static void do_emulation(struct cpu *cpu, unsigned char *restrict ram){
             byte1 = imm_8(cpu, ram);
             cpu->a = sbc_8(cpu, byte1);
             break;
+        case 0x98: // sbc a,b
+            cpu->a = sbc_8(cpu, cpu->b);
+            break;
+        case 0x99: // sbc a,c
+            cpu->a = sbc_8(cpu, cpu->c);
+            break;
+		case 0x9a: // sbc a,d
+            cpu->a = sbc_8(cpu, cpu->d);
+            break;
+		case 0x9b: // sbc a,e
+            cpu->a = sbc_8(cpu, cpu->e);
+            break;
+		case 0x9c: // sbc a,h
+            cpu->a = sbc_8(cpu, cpu->h);
+            break;
+		case 0x9d: // sbc a,l
+            cpu->a = sbc_8(cpu, cpu->l);
+            break;
         case 0xa1: // and c
             and_8(cpu, cpu->c);
             break;
@@ -1523,8 +1597,23 @@ static void do_emulation(struct cpu *cpu, unsigned char *restrict ram){
             if(--cpu->b)
                 cpu->pc = (short)(signed char)byte1 + cpu->pc;
             break;
+		case 0x90: // sub b
+            cpu->a = sub_8(cpu, cpu->b);
+            break;
+		case 0x91: // sub c
+            cpu->a = sub_8(cpu, cpu->c);
+            break;
+		case 0x92: // sub d
+            cpu->a = sub_8(cpu, cpu->d);
+            break;
 		case 0x93: // sub e
             cpu->a = sub_8(cpu, cpu->e);
+            break;
+		case 0x94: // sub h
+            cpu->a = sub_8(cpu, cpu->h);
+            break;
+		case 0x95: // sub l
+            cpu->a = sub_8(cpu, cpu->l);
             break;
         case 0x97: // sub a
             cpu->a = sub_8(cpu, cpu->a);
