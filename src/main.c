@@ -2,6 +2,7 @@
 #include <stdlib.h>
 #include <stdint.h>
 #include <string.h>
+#include <termios.h>
 #include "portable.h"
 
 #define BIOS_BASE 0xff00
@@ -555,7 +556,14 @@ static unsigned short bdos(
         if(tmp_byte == 0xff){
             // printf("\n\n\nTHEY WANT INPUT\n\n\n");
             // exit(2);
-            return (char)getchar();
+            char c = getchar();
+
+			// stupid hack needs to be fixed
+            if(c == '\n')
+				c = '\r';
+			else if(c == '\r')
+				c = '\n';
+            return c;
         }else if(tmp_byte == 0xfe){
             printf("\n\n\nTHEY WANT STATUS\n\n\n");
             exit(2);
@@ -641,9 +649,9 @@ static void do_emulation(struct cpu *cpu, unsigned char *restrict ram){
         
         ////////////////////////////////////////////////////////////////////////////        
         cpu->f &= 0x41;  // only Z and C matter for gorillas
-#if 1
+#if 0
         const unsigned long print_start = 291000;
-    const unsigned long prints_wanted = 50000;
+        const unsigned long prints_wanted = 50000;
 
 
         if(ran > print_start){ 
@@ -1290,6 +1298,10 @@ static void do_emulation(struct cpu *cpu, unsigned char *restrict ram){
             if (cpu->f_c)
                 cpu->pc = pop_16(cpu,ram);
             break;
+		case 0xd0: // ret nc
+            if (!cpu->f_c)
+                cpu->pc = pop_16(cpu,ram);
+            break;
         case 0xc8: // ret z
             if (cpu->f_z)
                 cpu->pc = pop_16(cpu,ram);
@@ -1508,9 +1520,25 @@ fail:
     fclose(fp);
 }
 
+static struct termios term_stored;
+
+static void repair_term(void){
+    tcsetattr(0,TCSANOW,&term_stored);
+}
+
+
+static void termio_stuff(void){
+    struct termios term_new;
+    tcgetattr(0,&term_stored);
+    atexit(&repair_term);
+    memcpy(&term_new,&term_stored,sizeof(struct termios));
+    term_new.c_lflag &= ~(ECHO|ICANON); /* disable echo and canonization */
+    tcsetattr(0,TCSANOW,&term_new);
+}
 
 int main(int argc, char const *argv[]) {
     (void)argc;
+    termio_stuff();
     //unsigned char ram[65536 + 3] = {0}; // 3 for printing opcode bytes easily
     unsigned char *ram = map_a_new_file_shared("ram.bin", 0x10000);
     memset(ram, 0x76, 0x10000); // HALT instruction
