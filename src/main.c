@@ -6,8 +6,15 @@
 #include <time.h>
 #include "portable.h"
 
+#define RAM_SIZE 0x10000
+#define HEX_FFED 0xffed
+
 #define BIOS_BASE 0xff00
-#define BDOS_BASE 0xfef5
+#define BDOS_BASE 0xfef5 // BIOS_BASE - 11
+#define RAM_SIZE 0x10000
+
+#define INITIAL_SP 0xfeed
+#define PROGRAM_START 0x100
 
 struct cpu{
     unsigned short pc; // Instruction Pointer  /  Program Counter
@@ -66,6 +73,211 @@ struct cpu{
     unsigned short hl_prime;
 };
 
+static void range_copy(unsigned char *dst, unsigned char *src, int start_idx, int end_idx);
+static void store_16(struct cpu *restrict const cpu, unsigned char *restrict const ram, unsigned short val, unsigned short addr);
+
+static unsigned short bdos(
+    unsigned char *restrict ram, 
+    unsigned char function, 
+    unsigned short parameter
+){
+    unsigned char tmp_byte;
+    switch (function){
+    case 0x19: // return currently selected drive
+        return 0; // drive A:
+    case 0x0f: // open a file
+        // Not implemented, print register values and then return 0xff for failure, maybe, I do not remember
+        printf("BDOS open %04hx  %02hhx %02hhx %02hhx %02hhx %02hhx %02hhx %02hhx %02hhx   %02hhx %02hhx %02hhx  \"%-8.8s.%-3.3s\"\n",
+            parameter,
+            ram[parameter+1],
+            ram[parameter+2],
+            ram[parameter+3],
+            ram[parameter+4],
+            ram[parameter+5],
+            ram[parameter+6],
+            ram[parameter+7],
+            ram[parameter+8],
+
+            ram[parameter+9],
+            ram[parameter+10],
+            ram[parameter+11],
+
+            ram+parameter+1,
+            ram+parameter+9
+        );
+        //exit(2);
+        return 0xff;
+    case 0x23: // get file size or something
+        printf("Did not get file size or something");
+        return 0xff;
+    case 0x00: // System Reset, exit
+        puts("Good Bye");
+        exit(0);
+    case 0x06: // Direct Console I/O
+        tmp_byte = parameter & 0xff;
+        if(tmp_byte == 0xff){
+            // printf("\n\n\nTHEY WANT INPUT\n\n\n");
+            // exit(2);
+            char c = getchar();
+
+			// stupid hack needs to be fixed
+            if(c == '\n')
+				c = '\r';
+			else if(c == '\r')
+				c = '\n';
+            return c;
+        }else if(tmp_byte == 0xfe){
+            printf("\n\n\nTHEY WANT STATUS\n\n\n");
+            exit(2);
+            return 0x00; // no char ready
+        }else{
+            putchar(parameter & 0xff);
+            fflush(stdout);
+            return 0x00; // might be wrong
+        }
+    case 0x69: // Time
+        {
+            long tmp = time(NULL) - 252460800; // time since 1978
+			struct{
+				unsigned short day;
+				unsigned char hour_high:4;
+				unsigned char hour_low:4;
+				unsigned char minute_high:4;
+				unsigned char minute_low:4;				
+			}cpm_time;
+			cpm_time.day = tmp/(24 * 60 * 60);
+			tmp %= 24 * 60 * 60;
+			cpm_time.hour_high = tmp/(60 * 60) / 10;
+			cpm_time.hour_low = tmp/(60 * 60) % 10;
+			tmp %= 60 * 60;
+			cpm_time.minute_high = tmp/(60) / 10;
+			cpm_time.minute_low = tmp/(60) % 10;
+			tmp %= 60;
+
+			struct{
+				unsigned char seconds_high:4;
+				unsigned char seconds_low:4;				
+			}cpm_seconds;
+			cpm_seconds.seconds_high = tmp/(60) / 10;
+			cpm_seconds.seconds_low = tmp/(60) % 10;
+
+			memcpy(ram + parameter, &cpm_time, sizeof cpm_time);
+
+			return *(unsigned char*)&cpm_seconds;
+        }
+    default:
+        printf("Function: %02hhx, parameter: %04hx\n", function, parameter);
+        exit(2);
+    }
+}
+
+static void bios(struct cpu *restrict const cpu, unsigned char *restrict const ram, unsigned short val){
+    (void)ram;
+    switch (val)
+    {
+    // case 0x00: // BOOT      arrive here from cold start load
+    // case 0x03: // WBOOT
+    // case 0x06: // CONST
+    // case 0x09: // CONIN
+    case 0x0c: // CONOUT
+        putchar(cpu->c);
+        fflush(stdout);
+        break;
+    case 0x0f: // LIST
+    case 0x12: // PUNCH
+    case 0x15: // READER
+    case 0x18: // HOME
+    case 0x1b: // SELDSK
+    case 0x1e: // SETTRK
+    case 0x21: // SETSEC
+    case 0x24: // SETDMA
+    case 0x27: // READ
+    case 0x2a: // WRITE
+    case 0x2d: // LISTST
+    case 0x30: // SECTRAN   sector translate subroutine
+    default:
+        fprintf(stderr, "Unhandled bios call %02hx\n", val);
+        exit(1);
+        break;
+    }
+}
+
+static void do_bios_or_bdos(struct cpu *restrict const cpu, unsigned char *restrict const ram, unsigned short oldpc){
+    if(oldpc == HEX_FFED){
+        cpu->hl = bdos(ram, cpu->c, cpu->de);
+        cpu->a = cpu->l;
+        cpu->b = cpu->h;
+    }else{
+        bios(cpu, ram, (oldpc - 0xffef) * 3 + 3);
+    }
+}
+
+#define PLACE_JMP(addr, value) do {\
+    ram[(addr) + 0] = 0xc3;\
+    ram[(addr) + 1] = (value) & 0xff;\
+    ram[(addr) + 2] = ((value) & 0xff00) >> 8;\
+} while (0)
+
+static void setup_bios_and_bdos(struct cpu *restrict const cpu, unsigned char *restrict const ram, const char **argv){
+        // bad idea, should change
+    memset(ram + HEX_FFED, 0xc9, 19);
+
+    PLACE_JMP(0x5, BDOS_BASE); // Place jump to BDOS
+
+
+    // We need the address jumped too, the opcode placed does not matter, it only matters on real
+    // hardware. Some CP/M programs will grab the address of the bios from the jmp instruction 
+    // that sits at the low address of memory.
+    PLACE_JMP(0x0, BIOS_BASE + 3); // Place jump to WBOOT
+
+    PLACE_JMP(BDOS_BASE, HEX_FFED); // place jmp at BDOS_BASE which is BIOS_BASE - 11
+    PLACE_JMP(BIOS_BASE + 0, HEX_FFED + 1);
+    PLACE_JMP(BIOS_BASE + 3, HEX_FFED + 2);
+    PLACE_JMP(BIOS_BASE + 6, HEX_FFED + 3);
+    PLACE_JMP(BIOS_BASE + 9, HEX_FFED + 4);
+    PLACE_JMP(BIOS_BASE + 12, HEX_FFED + 5);
+    
+    // ram[0xff00 + 15] = 0xc3;
+    
+
+    cpu->af = 0x0000;
+    cpu->sp = 0xfeed;
+
+    // should put some fancy stuff here with a loop to deal with more then 1 guest arg
+    strcpy((char *)ram + 0x82, argv[2] ? argv[2] : "");
+    ram[0x81] = ' ';
+    ram[0x80] = strlen((char *)ram + 0x80);
+
+
+# if 0
+    // Load pre-setup-ram
+    FILE *ram_file = fopen("/home/kev/Desktop/Dev/ref_z80_emu/tnylpo/ram_at_start.bin", "rb");
+    if(!ram_file)
+        exit(45);
+
+    unsigned char *correct_ram = malloc(RAM_SIZE);
+    fread(correct_ram, RAM_SIZE, 1, ram_file);
+    fclose(ram_file);
+
+    // range_copy(ram, correct_ram, 1, 2); // Steal first 500 bytes from pre-setup ram, FIXME
+    // range_copy(ram, correct_ram, RAM_SIZE - 267, RAM_SIZE - 242); // Steal last 500 bytes from pre-setup ram, FIXME
+#endif
+}
+
+static void range_copy(unsigned char *dst, unsigned char *src, int start_idx, int end_idx){
+    int amount = end_idx - start_idx + 1;
+    if (amount < 1 || amount > RAM_SIZE || end_idx < 0)
+    {
+        puts("weird use of range_copy();");
+        fflush(stdout);
+        exit(345);
+    }
+    
+    dst = dst + start_idx;
+    src = src + start_idx;
+    memcpy(dst, src, amount);
+}
+
 static unsigned char parity(unsigned char p){
     p = ((p >> 1) & 0x55)+(p & 0x55);
     p = ((p >> 2) & 0x33)+(p & 0x33);
@@ -80,7 +292,6 @@ static unsigned alu_8_add(struct cpu *cpu, unsigned x, unsigned y, unsigned carr
     uint64_t hsum = (x & 0xf) + (y & 0xf) + (carry_in & 1);
     int hcarry = hsum >> 4;
     uint64_t usum = (x & 0xff) + (y & 0xff) + (carry_in & 1);
-    // int64_t ssum = (int64_t)(signed char)x + (int64_t)(signed char)y + (int64_t)(signed char)carry_in;
     int carry_out = usum != (uint8_t)usum;
     int overflow = ((usum ^ x) & (usum ^ y)) >> 7;
     
@@ -93,27 +304,6 @@ static unsigned alu_8_add(struct cpu *cpu, unsigned x, unsigned y, unsigned carr
     cpu->f_c = carry_out;
     cpu->f_s = neg;
     cpu->f_h = hcarry;
-    // cpu->f_n   set by caller
-
-
-    // uint64_t hsum = (x & 0xf) + (y & 0xf) + carry_in;
-    // int hcarry = hsum >> 4;
-    // uint64_t usum = x + y + carry_in;
-    // int64_t ssum = (int64_t)(signed char)x + (int64_t)(signed char)y + (int64_t)(signed char)carry_in;
-    // int carry_out = usum != (uint8_t)usum;
-    // int overflow = ssum != (int8_t)ssum;
-    
-    // uint8_t result = usum;
-    // int zero = !result;
-    // int neg = result >> 7;
-
-    // cpu->f_z = zero;
-    // cpu->f_pv = overflow;  //might need to be !overflow
-    // cpu->f_c = carry_out;
-    // cpu->f_s = neg;
-    // cpu->f_h = hcarry;
-    // // cpu->f_n   set by caller
-
 
     return result;
 }
@@ -158,40 +348,6 @@ static unsigned sub_8(struct cpu *cpu, unsigned x){
     cpu->f_s  = (rflags>>7)&1;
 
     return src_dst;
-
-/* sbc_8 code:
-    unsigned long rflags = cpu->f_pv<<11 | (cpu->f & 0xd1);
-    unsigned long src = x;
-    unsigned long src_dst = cpu->a;
-
-    __asm__ __volatile__ (
-        "pushfq\n\t"
-
-        "pushfq\n\t"
-        "andw $0xf72a,0(%%rsp)\n\t"
-        "orw %w0,0(%%rsp)\n\t"
-        "popfq\n\t"
-
-        "sbbb %b2, %b1\n\t"
-
-        "pushfq\n\t"
-        "popq %0\n\t"
-
-        "popfq\n\t"
-
-        :"+&q"(rflags),"+&q"(src_dst)
-        :"q"(src)
-    );
-
-    cpu->f_c  = (rflags>>0)&1;
-    cpu->f_n  = 1;
-    cpu->f_pv = (rflags>>11)&1;
-    cpu->f_h  = (rflags>>4)&1;
-    cpu->f_z  = (rflags>>6)&1;
-    cpu->f_s  = (rflags>>7)&1;
-
-    return src_dst;
-*/
 }
 
 static void inc_8(struct cpu *cpu, unsigned char *p){
@@ -353,28 +509,6 @@ static unsigned add16(struct cpu *cpu, unsigned x, unsigned y, unsigned carry_in
     cpu->f_h = hcarry;
     // cpu->f_n   set by caller
 
-
-
-    // uint64_t hsum = (x & 0xfff) + (y & 0xfff) + carry_in;
-    // int hcarry = hsum >> 12;
-    // uint64_t usum = x + y + carry_in;
-    // // int64_t ssum = (int64_t)(signed short)x + (int64_t)(signed short)y + (int64_t)(signed short)carry_in;
-    // unsigned carry_out = usum != (uint16_t)usum;
-    // // int overflow = ssum != (int8_t)ssum;
-    
-    // uint16_t result = usum;
-    // // int zero = !result;
-    // // int neg = result >> 15;
-
-    // // cpu->f_z = zero;
-    // // cpu->f_pv = overflow;  //might need to be !overflow
-    // cpu->f_c = carry_out;
-    // // cpu->f_s = neg;
-    // cpu->f_h = hcarry;
-    // // cpu->f_n   set by caller
-
-
-
     return result;
 }
 
@@ -463,6 +597,8 @@ static unsigned char imm_8(struct cpu *restrict const cpu, const unsigned char *
     mem_tracker[addr] |= 0x04;
 
     if(mem_tracker[addr] & 0x02){
+        // if this happens that means the bytes after pc has been written too. If the executalbe section
+        // in ram is written to, bad stuff is probably happening.
         printf("Detected bad stuff, address %04hx last written by %04hx\n", addr, writers[addr]);
         exit(44);
     }
@@ -515,154 +651,12 @@ static unsigned short imm_16(struct cpu *restrict const cpu, const unsigned char
     return high << 8 | low;
 }
 
-static unsigned short bdos(
-    unsigned char *restrict ram, 
-    unsigned char function, 
-    unsigned short parameter
-){
-    unsigned char tmp_byte;
-    switch (function){
-    case 0x19: // return currently selected drive
-        return 0; // drive A:
-    case 0x0f: // open a file
-        printf("BDOS open %04hx  %02hhx %02hhx %02hhx %02hhx %02hhx %02hhx %02hhx %02hhx   %02hhx %02hhx %02hhx  \"%-8.8s.%-3.3s\"\n",
-            parameter,
-            ram[parameter+1],
-            ram[parameter+2],
-            ram[parameter+3],
-            ram[parameter+4],
-            ram[parameter+5],
-            ram[parameter+6],
-            ram[parameter+7],
-            ram[parameter+8],
-
-            ram[parameter+9],
-            ram[parameter+10],
-            ram[parameter+11],
-
-            ram+parameter+1,
-            ram+parameter+9
-        );
-        //exit(2);
-        return 0xff;
-    case 0x23: // get file size or something
-        return 0xff;
-    case 0x00: // System Reset, exit
-        puts("Good Bye");
-        exit(0);
-    case 0x06: // Direct Console I/O
-        tmp_byte = parameter & 0xff;
-        if(tmp_byte == 0xff){
-            // printf("\n\n\nTHEY WANT INPUT\n\n\n");
-            // exit(2);
-            char c = getchar();
-
-			// stupid hack needs to be fixed
-            if(c == '\n')
-				c = '\r';
-			else if(c == '\r')
-				c = '\n';
-            return c;
-        }else if(tmp_byte == 0xfe){
-            printf("\n\n\nTHEY WANT STATUS\n\n\n");
-            exit(2);
-            return 0x00; // no char ready
-        }else{
-            putchar(parameter & 0xff);
-            fflush(stdout);
-            return 0x00; // might be wrong
-        }
-    case 0x69: // Time
-        {
-            long tmp = time(NULL) - 252460800; // time since 1978
-			struct{
-				unsigned short day;
-				unsigned char hour_high:4;
-				unsigned char hour_low:4;
-				unsigned char minute_high:4;
-				unsigned char minute_low:4;				
-			}cpm_time;
-			cpm_time.day = tmp/(24 * 60 * 60);
-			tmp %= 24 * 60 * 60;
-			cpm_time.hour_high = tmp/(60 * 60) / 10;
-			cpm_time.hour_low = tmp/(60 * 60) % 10;
-			tmp %= 60 * 60;
-			cpm_time.minute_high = tmp/(60) / 10;
-			cpm_time.minute_low = tmp/(60) % 10;
-			tmp %= 60;
-
-			struct{
-				unsigned char seconds_high:4;
-				unsigned char seconds_low:4;				
-			}cpm_seconds;
-			cpm_seconds.seconds_high = tmp/(60) / 10;
-			cpm_seconds.seconds_low = tmp/(60) % 10;
-
-			memcpy(ram + parameter, &cpm_time, sizeof cpm_time);
-
-			return *(unsigned char*)&cpm_seconds;
-        }
-    default:
-        printf("Function: %02hhx, parameter: %04hx\n", function, parameter);
-        exit(2);
-    }
-}
-
-static void bios(struct cpu *restrict const cpu, unsigned char *restrict const ram, unsigned short val){
-    switch (val)
-    {
-    // case 0x00: // BOOT      arrive here from cold start load
-    // case 0x03: // WBOOT
-    // case 0x06: // CONST
-    // case 0x09: // CONIN
-    case 0x0c: // CONOUT
-        putchar(cpu->c);
-        fflush(stdout);
-        break;
-    case 0x0f: // LIST
-    case 0x12: // PUNCH
-    case 0x15: // READER
-    case 0x18: // HOME
-    case 0x1b: // SELDSK
-    case 0x1e: // SETTRK
-    case 0x21: // SETSEC
-    case 0x24: // SETDMA
-    case 0x27: // READ
-    case 0x2a: // WRITE
-    case 0x2d: // LISTST
-    case 0x30: // SECTRAN   sector translate subroutine
-    default:
-        fprintf(stderr, "Unhandled bios call %02hx\n", val);
-        exit(1);
-        break;
-    }
-}
-
-static void do_bios_or_bdos(struct cpu *restrict const cpu, unsigned char *restrict const ram, unsigned short oldpc){
-    if(oldpc == 0xffed){
-        cpu->hl = bdos(ram, cpu->c, cpu->de);
-        cpu->a = cpu->l;
-        cpu->b = cpu->h;
-    }else{
-        bios(cpu, ram, (oldpc - 0xffef) * 3 + 3);
-    }
-}
-
 static void do_emulation(struct cpu *cpu, unsigned char *restrict ram){
     FILE *fp = fopen("debug.txt", "wb");
     unsigned long long ran = 0;
     unsigned short oldoldoldpc = 0xffff;
     unsigned short oldoldpc = 0xffff;
     unsigned short oldpc = 0xffff;
-
-    {
-        FILE *ram_file = fopen("/home/man/Desktop/Dev/ref_z80_emu/tnylpo/ram_at_start.bin", "rb");
-        if(!ram_file)
-            exit(45);
-
-        fread(ram, 0x10000, 1, ram_file);
-        fclose(ram_file);
-    }
 
     for(;;){
         ran++;
@@ -1382,6 +1376,8 @@ static void do_emulation(struct cpu *cpu, unsigned char *restrict ram){
             break;
         case 0xc9: // ret
             cpu->pc = pop_16(cpu,ram);
+
+            // If the return was from a bios/bdos placeholder in mem, do the bios/bdos stuff
             if(oldpc >= BDOS_BASE)
                 do_bios_or_bdos(cpu, ram, oldpc);
             break;
@@ -1689,10 +1685,10 @@ int main(int argc, char const *argv[]) {
     (void)argc;
     termio_stuff();
     //unsigned char ram[65536 + 3] = {0}; // 3 for printing opcode bytes easily
-    unsigned char *ram = map_a_new_file_shared("ram.bin", 0x10000);
-    memset(ram, 0x76, 0x10000); // HALT instruction
-    writers = map_a_new_file_shared("writers.bin", 0x10000 * sizeof(short)); // debug stuff
-    mem_tracker = map_a_new_file_shared("mem_tracker.bin", 0x10000); // debug stuff
+    unsigned char *ram = map_a_new_file_shared("ram.bin", RAM_SIZE);
+    memset(ram, 0x76, RAM_SIZE); // Set all of ram to the HALT instruction
+    writers = map_a_new_file_shared("writers.bin", RAM_SIZE * sizeof(short)); // debug stuff
+    mem_tracker = map_a_new_file_shared("mem_tracker.bin", RAM_SIZE); // debug stuff
 
 
     FILE *fp = fopen(argv[1], "rb");
@@ -1700,24 +1696,20 @@ int main(int argc, char const *argv[]) {
         puts("No input file");
         return 1;
     }else{
-        printf("got %zd bytes\n", fread(ram + 256, 1, 65536 - 256, fp));
+        printf("got %zd bytes\n", fread(ram + 256, 1, RAM_SIZE - PROGRAM_START, fp));
         fclose(fp);
     }
     
     struct cpu _cpu;
     struct cpu *cpu = &_cpu;
     memset(cpu, 0, sizeof *cpu);
-    cpu->pc = 256; //where CPM starts program
-    ram[5] = 0xc3;
-    ram[6] = 0xf5;
-    ram[7] = 0xfe;
-    cpu->af = 0x0000;
-    cpu->sp = 0xfeed;
 
-    // should put some fancy stuff here with a loop to deal with more then 1 guest arg
-    strcpy((char *)ram + 0x82, argv[2] ? argv[2] : "");
-    ram[0x81] = ' ';
-    ram[0x80] = strlen((char *)ram + 0x80);
+    // With real hardware bdos sets there registers to these values before starting a program
+    cpu->pc = PROGRAM_START;
+    cpu->af = 0x0000; // Don't remember why this needs to be at 0x0000, something about how the bios does things?
+    cpu->sp = INITIAL_SP;
+
+    setup_bios_and_bdos(cpu, ram, argv);
 
     do_emulation(cpu, ram);
 
@@ -1737,6 +1729,7 @@ More info on CP/M here:
 https://en.wikipedia.org/wiki/CP/M
 http://www.classiccmp.org/cpmarchives/
 http://www.cpm.z80.de/
+http://www.cpm.z80.de/manuals/cpm3-sys.pdf
 http://www.digitalresearch.biz/CPM.HTM
 http://gunkies.org/wiki/CP/M
 
