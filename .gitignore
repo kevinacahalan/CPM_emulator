@@ -2,3 +2,6 @@
 *.o
 *logs
 *vgcore.*
+*.com
+*.txt
+*CPM_emu
