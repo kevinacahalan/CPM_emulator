@@ -6,7 +6,8 @@
                 "${workspaceFolder}/**",
                 "/usr/include",
                 "/usr/include/**",
-                "/usr/include/sys"
+                "/usr/include/sys",
+                "/usr/include/*"
             ],
             "defines": [],
             "compilerPath": "/usr/bin/gcc",
