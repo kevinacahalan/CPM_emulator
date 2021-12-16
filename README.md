@@ -1,7 +1,5 @@
 ## CPM Emulator
 
-Out of the box this emulator does not work. It depends on loading pre-setup ram from a file. I need to implement ram initialization correctly.
-
 #### Here is a program to run:
 
 https://github.com/sblendorio/gorilla-cpm
