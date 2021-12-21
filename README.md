@@ -10,9 +10,13 @@ https://github.com/sblendorio/gorilla-cpm/blob/master/binary/gorilla.com
 
 ### Info on CP/M here:
 https://en.wikipedia.org/wiki/CP/M
+
 http://www.classiccmp.org/cpmarchives/
+
 http://www.cpm.z80.de/
+
 http://www.digitalresearch.biz/CPM.HTM
+
 http://gunkies.org/wiki/CP/M
 
 ### Info on the Z80 CPU here:
