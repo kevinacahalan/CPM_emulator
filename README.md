@@ -5,7 +5,7 @@
 
 ### Here is a program to run:
 
-https://github.com/sblendorio/gorilla-cpm
+https://github.com/sblendorio/gorilla-cpm/blob/master/binary/gorilla.com
 
 
 ### Info on CP/M here:
