@@ -3,18 +3,56 @@
 #include <stdint.h>
 #include <string.h>
 #include <termios.h>
+
+#include <errno.h>
+#include <sys/select.h>
+#include <sys/time.h>
+#include <sys/types.h>
+#include <unistd.h>
+#include <fcntl.h>
+
 #include <time.h>
 #include "portable.h"
 
-#define RAM_SIZE 0x10000
-#define HEX_FFED 0xffed
+// LAYOUT OF MEMORY
+/*
 
-#define BIOS_BASE 0xff00
-#define BDOS_BASE 0xfef5 // BIOS_BASE - 11
++========== 0x0
+| 0x01 -- 0x3 holds location BIOS_BASE + 3, WBOOT
+| 0x06 -- 0x08 holds location of BDOS_BASE
+| 0x100 -- Where guest program is placed in memory
+|
+|
+|
+|
+|
+| STACK -- The stack grows from here up, up to lower addresses
+| BDOS jump
+| BDOS return
+| BIOS jumps
+| BIOS returns
++========== 0xffff
+*/
+
+
+#define SIZE_OF_RT 1
+#define SIZE_OF_JUMP 3
 #define RAM_SIZE 0x10000
 
-#define INITIAL_SP 0xfeed
+#define N_OF_BIOS_FN 33
+#define BIOS_RETURNS (RAM_SIZE - N_OF_BIOS_FN * SIZE_OF_RT)
+#define JUMPS_TO_BIOS_RETURNS (BIOS_RETURNS - N_OF_BIOS_FN * SIZE_OF_JUMP)
+
+#define N_OF_BDOS_FN 1
+#define BDOS_RETURN (JUMPS_TO_BIOS_RETURNS - N_OF_BDOS_FN * SIZE_OF_RT)
+#define JUMP_TO_BDOS_RETURN (BDOS_RETURN - N_OF_BDOS_FN * SIZE_OF_JUMP)
+
+#define BIOS_BASE JUMPS_TO_BIOS_RETURNS
+#define BDOS_BASE JUMP_TO_BDOS_RETURN
+#define INITIAL_SP JUMP_TO_BDOS_RETURN
 #define PROGRAM_START 0x100
+#define RET_OPCODE 0xc9
+
 
 struct cpu{
     unsigned short pc; // Instruction Pointer  /  Program Counter
@@ -76,6 +114,51 @@ struct cpu{
 static void range_copy(unsigned char *dst, unsigned char *src, int start_idx, int end_idx);
 static void store_16(struct cpu *restrict const cpu, unsigned char *restrict const ram, unsigned short val, unsigned short addr);
 
+static int is_char_waiting(int fd){
+    fd_set rfd;
+    FD_ZERO(&rfd);
+    FD_SET(fd, &rfd);
+    struct timeval timeout = (struct timeval){.tv_sec=0,.tv_usec=0,};
+    int rc = select(fd + 1, &rfd, NULL, NULL, &timeout);
+    if(rc == -1)
+        exit(93);
+    return rc;
+}
+
+static char get_char_or_NULL(int fd){
+    char data = '\0';
+    int flags = fcntl(fd, F_GETFL);
+    fcntl(fd, F_SETFL, flags | O_NONBLOCK);
+    while(read(fd, &data, 1) == -1 && errno == EINTR)
+        ;
+    
+    // At this point assume no error, or errno is EAGIN or WEOULDBLOCK
+
+
+    fcntl(fd, F_SETFL, flags);
+    return data;
+}
+
+static struct termios term_stored;
+
+static void repair_term(void){
+    tcsetattr(0,TCSANOW,&term_stored);
+}
+
+static void termio_stuff(void){
+    // Disable IO bufffering
+    setvbuf(stdin, NULL, _IONBF, 0);
+    setvbuf(stdout, NULL, _IONBF, 0);
+    setvbuf(stderr, NULL, _IONBF, 0);
+
+    struct termios term_new;
+    tcgetattr(STDIN_FILENO, &term_stored);
+    atexit(&repair_term);
+    memcpy(&term_new, &term_stored, sizeof(struct termios));
+    term_new.c_lflag &= ~(ECHO|ICANON); /* disable echo and canonization */
+    tcsetattr(STDIN_FILENO, TCSANOW, &term_new);
+}
+
 static unsigned short bdos(
     unsigned char *restrict ram, 
     unsigned char function, 
@@ -118,7 +201,7 @@ static unsigned short bdos(
         if(tmp_byte == 0xff){
             // printf("\n\n\nTHEY WANT INPUT\n\n\n");
             // exit(2);
-            char c = getchar();
+            char c = get_char_or_NULL(STDIN_FILENO);
 
 			// stupid hack needs to be fixed
             if(c == '\n')
@@ -127,9 +210,10 @@ static unsigned short bdos(
 				c = '\n';
             return c;
         }else if(tmp_byte == 0xfe){
-            printf("\n\n\nTHEY WANT STATUS\n\n\n");
-            exit(2);
-            return 0x00; // no char ready
+            return is_char_waiting(STDIN_FILENO);
+        }else if(tmp_byte == 0xfd){
+            // blocking read w/o echo
+            exit(89);
         }else{
             putchar(parameter & 0xff);
             fflush(stdout);
@@ -203,12 +287,12 @@ static void bios(struct cpu *restrict const cpu, unsigned char *restrict const r
 }
 
 static void do_bios_or_bdos(struct cpu *restrict const cpu, unsigned char *restrict const ram, unsigned short oldpc){
-    if(oldpc == HEX_FFED){
+    if(oldpc == BDOS_RETURN){
         cpu->hl = bdos(ram, cpu->c, cpu->de);
         cpu->a = cpu->l;
         cpu->b = cpu->h;
     }else{
-        bios(cpu, ram, (oldpc - 0xffef) * 3 + 3);
+        bios(cpu, ram, (oldpc - BIOS_RETURNS) * 3);
     }
 }
 
@@ -219,51 +303,33 @@ static void do_bios_or_bdos(struct cpu *restrict const cpu, unsigned char *restr
 } while (0)
 
 static void setup_bios_and_bdos(struct cpu *restrict const cpu, unsigned char *restrict const ram, const char **argv){
-        // bad idea, should change
-    memset(ram + HEX_FFED, 0xc9, 19);
+    // Place magic opcodes (RET instructions intercepted by emulator) for BIOS
+    memset(ram + BIOS_RETURNS, RET_OPCODE, N_OF_BIOS_FN);
 
-    PLACE_JMP(0x5, BDOS_BASE); // Place jump to BDOS
+    // Place the BIOS jump table, pointing at magic opcodes
+    for(int i = 0; i < N_OF_BIOS_FN; i++)
+        PLACE_JMP(JUMPS_TO_BIOS_RETURNS + i * 3, BIOS_RETURNS + i);
 
+    // place the BDOS entry point magic opcode
+    memset(ram + BDOS_RETURN, RET_OPCODE, N_OF_BDOS_FN);
 
-    // We need the address jumped too, the opcode placed does not matter, it only matters on real
-    // hardware. Some CP/M programs will grab the address of the bios from the jmp instruction 
-    // that sits at the low address of memory.
-    PLACE_JMP(0x0, BIOS_BASE + 3); // Place jump to WBOOT
+    // place the BDOS entry point jump
+    PLACE_JMP(JUMP_TO_BDOS_RETURN, BDOS_RETURN);
 
-    PLACE_JMP(BDOS_BASE, HEX_FFED); // place jmp at BDOS_BASE which is BIOS_BASE - 11
-    PLACE_JMP(BIOS_BASE + 0, HEX_FFED + 1);
-    PLACE_JMP(BIOS_BASE + 3, HEX_FFED + 2);
-    PLACE_JMP(BIOS_BASE + 6, HEX_FFED + 3);
-    PLACE_JMP(BIOS_BASE + 9, HEX_FFED + 4);
-    PLACE_JMP(BIOS_BASE + 12, HEX_FFED + 5);
-    
-    // ram[0xff00 + 15] = 0xc3;
-    
+    cpu->sp = INITIAL_SP;
+    cpu->pc = PROGRAM_START;
+    cpu->af = 0x0000; // Not needed, already 0
 
-    cpu->af = 0x0000;
-    cpu->sp = 0xfeed;
+    PLACE_JMP(0, BIOS_BASE + 3); // Place jump to WBOOT
+    PLACE_JMP(5, BDOS_BASE); // Place JMP to BDOS
 
-    // should put some fancy stuff here with a loop to deal with more then 1 guest arg
+    // Place command line argument in ram, does not support multible args yet
     strcpy((char *)ram + 0x82, argv[2] ? argv[2] : "");
     ram[0x81] = ' ';
     ram[0x80] = strlen((char *)ram + 0x80);
-
-
-# if 0
-    // Load pre-setup-ram
-    FILE *ram_file = fopen("/home/kev/Desktop/Dev/ref_z80_emu/tnylpo/ram_at_start.bin", "rb");
-    if(!ram_file)
-        exit(45);
-
-    unsigned char *correct_ram = malloc(RAM_SIZE);
-    fread(correct_ram, RAM_SIZE, 1, ram_file);
-    fclose(ram_file);
-
-    // range_copy(ram, correct_ram, 1, 2); // Steal first 500 bytes from pre-setup ram, FIXME
-    // range_copy(ram, correct_ram, RAM_SIZE - 267, RAM_SIZE - 242); // Steal last 500 bytes from pre-setup ram, FIXME
-#endif
 }
 
+#if 0
 static void range_copy(unsigned char *dst, unsigned char *src, int start_idx, int end_idx){
     int amount = end_idx - start_idx + 1;
     if (amount < 1 || amount > RAM_SIZE || end_idx < 0)
@@ -277,6 +343,7 @@ static void range_copy(unsigned char *dst, unsigned char *src, int start_idx, in
     src = src + start_idx;
     memcpy(dst, src, amount);
 }
+#endif
 
 static unsigned char parity(unsigned char p){
     p = ((p >> 1) & 0x55)+(p & 0x55);
@@ -1095,6 +1162,9 @@ static void do_emulation(struct cpu *cpu, unsigned char *restrict ram){
         case 0x21: // ld hl,**
             cpu->hl = imm_16(cpu, ram);
             break;
+        case 0x31: // ld sp,**
+            cpu->sp = imm_16(cpu, ram);
+            break;
         case 0xcd: // call **
             tmp_ushort = imm_16(cpu, ram);
             push_16(cpu, ram, cpu->pc);
@@ -1665,22 +1735,6 @@ fail:
     fclose(fp);
 }
 
-static struct termios term_stored;
-
-static void repair_term(void){
-    tcsetattr(0,TCSANOW,&term_stored);
-}
-
-
-static void termio_stuff(void){
-    struct termios term_new;
-    tcgetattr(0,&term_stored);
-    atexit(&repair_term);
-    memcpy(&term_new,&term_stored,sizeof(struct termios));
-    term_new.c_lflag &= ~(ECHO|ICANON); /* disable echo and canonization */
-    tcsetattr(0,TCSANOW,&term_new);
-}
-
 int main(int argc, char const *argv[]) {
     (void)argc;
     termio_stuff();
@@ -1700,17 +1754,12 @@ int main(int argc, char const *argv[]) {
         fclose(fp);
     }
     
+    // Initialize CPU
     struct cpu _cpu;
     struct cpu *cpu = &_cpu;
     memset(cpu, 0, sizeof *cpu);
 
-    // With real hardware bdos sets there registers to these values before starting a program
-    cpu->pc = PROGRAM_START;
-    cpu->af = 0x0000; // Don't remember why this needs to be at 0x0000, something about how the bios does things?
-    cpu->sp = INITIAL_SP;
-
     setup_bios_and_bdos(cpu, ram, argv);
-
     do_emulation(cpu, ram);
 
     return 0;
@@ -1719,29 +1768,26 @@ int main(int argc, char const *argv[]) {
 
 
 /*
+    Here is a program to run:
 
-Here is a program to run:
+    https://github.com/sblendorio/gorilla-cpm
 
-https://github.com/sblendorio/gorilla-cpm
+    More info on CP/M here:
 
-More info on CP/M here:
+    https://en.wikipedia.org/wiki/CP/M
+    http://www.classiccmp.org/cpmarchives/
+    http://www.cpm.z80.de/
+    http://www.cpm.z80.de/manuals/cpm3-sys.pdf
+    http://www.digitalresearch.biz/CPM.HTM
+    http://gunkies.org/wiki/CP/M
 
-https://en.wikipedia.org/wiki/CP/M
-http://www.classiccmp.org/cpmarchives/
-http://www.cpm.z80.de/
-http://www.cpm.z80.de/manuals/cpm3-sys.pdf
-http://www.digitalresearch.biz/CPM.HTM
-http://gunkies.org/wiki/CP/M
+    More on Z80 CPU here:
 
-More on Z80 CPU here:
-
-https://en.wikipedia.org/wiki/Zilog_Z80
-http://www.zilog.com/docs/z80/um0080.pdf
-https://www.digikey.com/catalog/en/partgroup/z80/15507
-http://z80.info/decoding.htm
-https://clrhome.org/table/
-https://wikiti.brandonw.net/index.php?title=Z80_Instruction_Set
-https://www.ticalc.org/pub/text/z80/
-
-
+    https://en.wikipedia.org/wiki/Zilog_Z80
+    http://www.zilog.com/docs/z80/um0080.pdf
+    https://www.digikey.com/catalog/en/partgroup/z80/15507
+    http://z80.info/decoding.htm
+    https://clrhome.org/table/
+    https://wikiti.brandonw.net/index.php?title=Z80_Instruction_Set
+    https://www.ticalc.org/pub/text/z80/
 */
