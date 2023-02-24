@@ -6,3 +6,5 @@
 *.COM
 *.txt
 *CPM_emu
+c128/*
+*.out

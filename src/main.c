@@ -159,6 +159,9 @@ static void termio_stuff(void){
     tcsetattr(STDIN_FILENO, TCSANOW, &term_new);
 }
 
+#define NONE 42
+// documentation on CP/M functions http://www.gaby.de/cpm/manuals/archive/cpm22htm/ch5.htm
+// CP/M function processing function
 static unsigned short bdos(
     unsigned char *restrict ram, 
     unsigned char function, 
@@ -168,6 +171,15 @@ static unsigned short bdos(
     switch (function){
     case 0x19: // return currently selected drive
         return 0; // drive A:
+    case 0x02: // Console Output
+        putchar(parameter);
+        // fflush(stdout);
+        return NONE;
+    case 0x0e: // Select Disk
+        printf("Called Select Disk with parameter %04hx\n", parameter);
+        return NONE;
+    case 0x0b: // Console Status
+        return is_char_waiting(STDIN_FILENO) ? 0xff : 0;
     case 0x0f: // open a file
         // Not implemented, print register values and then return 0xff for failure, maybe, I do not remember
         printf("BDOS open %04hx  %02hhx %02hhx %02hhx %02hhx %02hhx %02hhx %02hhx %02hhx   %02hhx %02hhx %02hhx  \"%-8.8s.%-3.3s\"\n",
@@ -250,7 +262,7 @@ static unsigned short bdos(
 			return *(unsigned char*)&cpm_seconds;
         }
     default:
-        printf("Function: %02hhx, parameter: %04hx\n", function, parameter);
+        printf("BDOS function: %02hhx, parameter: %04hx\n", function, parameter);
         exit(2);
     }
 }
@@ -265,7 +277,7 @@ static void bios(struct cpu *restrict const cpu, unsigned char *restrict const r
     // case 0x09: // CONIN
     case 0x0c: // CONOUT
         putchar(cpu->c);
-        fflush(stdout);
+        // fflush(stdout);
         break;
     case 0x0f: // LIST
     case 0x12: // PUNCH
@@ -817,6 +829,8 @@ static void do_emulation(struct cpu *cpu, unsigned char *restrict ram){
 
 
         switch (opcode){
+        case 0x00: // nop
+            break;
         case 0xc3: // jp **
             cpu->pc = imm_16(cpu, ram);
             break;
@@ -1153,9 +1167,6 @@ static void do_emulation(struct cpu *cpu, unsigned char *restrict ram){
             cpu->f_z = !cpu->a;
             cpu->f_s = cpu->a >> 7; // take sign bit and put it in f_s
             break;
-        case 0x67: // ld h,a
-            cpu->h = cpu->a;
-            break;
         case 0xe5: //push hl
             push_16(cpu, ram, cpu->hl);
             break;
@@ -1433,8 +1444,14 @@ static void do_emulation(struct cpu *cpu, unsigned char *restrict ram){
             if(!cpu->f_z)
                 cpu->pc = (short)(signed char)byte1 + cpu->pc;
             break;
-        case 0x69: // ld l,c    program will not work without this instruction
+        case 0x69: // ld l,c
             cpu->l = cpu->c;
+            break;
+        case 0x6c: // ld l,h
+            cpu->l = cpu->h;
+            break;
+        case 0x6d: // ld l,l
+            cpu->l = cpu->l;
             break;
         case 0x60: // ld h,b
             cpu->h = cpu->b;
@@ -1483,6 +1500,9 @@ static void do_emulation(struct cpu *cpu, unsigned char *restrict ram){
             byte1 = imm_8(cpu, ram);
             if(cpu->f_c)
                 cpu->pc = (short)(signed char)byte1 + cpu->pc;
+            break;
+        case 0x75: // ld (hl),l
+            store_8(cpu, ram, cpu->l, cpu->hl);
             break;
         case 0x77: // ld (hl),a
             store_8(cpu, ram, cpu->a, cpu->hl);
@@ -1655,8 +1675,23 @@ static void do_emulation(struct cpu *cpu, unsigned char *restrict ram){
 		case 0x58: // ld e,b
 			cpu->e = cpu->b;
 			break;
+        case 0x61: // ld h,c
+            cpu->h = cpu->c;
+            break;
         case 0x62: // ld h,d
             cpu->h = cpu->d;
+            break;
+        case 0x63: // ld h,e
+            cpu->h = cpu->e;
+            break;
+        case 0x64: // ld h,h
+            cpu->h = cpu->h;
+            break;
+        case 0x65: // ld h,l
+            cpu->h = cpu->l;
+            break;
+        case 0x67: // ld h,a
+            cpu->h = cpu->a;
             break;
         case 0x10: // djnz *
             byte1 = imm_8(cpu, ram);
@@ -1703,6 +1738,10 @@ static void do_emulation(struct cpu *cpu, unsigned char *restrict ram){
         case 0x1e: // ld e,*
             byte1 = imm_8(cpu, ram);
             cpu->e = byte1;
+            break;
+        case 0x2e: // ld l,*
+            byte1 = imm_8(cpu, ram);
+            cpu->l = byte1;
             break;
         case 0x0e: // ld c,*
             byte1 = imm_8(cpu, ram);
